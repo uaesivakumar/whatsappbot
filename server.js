@@ -159,6 +159,8 @@ import { registerWebhook } from "./src/wa/webhook.js";
 import { toCsv } from "./src/admin/export.js";
 import { profilesToCsv } from "./src/admin/export_profiles.js";
 import * as Profiles from "./src/memory/profiles.js";
+import { profilesToCsv } from "./src/admin/export_profiles.js";
+import * as Profiles from "./src/memory/profiles.js";
 import { onUserTextCapture } from "./src/memory/capture.js";
 
 const app = express();
@@ -345,6 +347,39 @@ app.get("/admin/search.csv", async (req, res) => {
     return res.status(200).send(csv);
   } catch (e) {
     console.error("admin search.csv error:", e);
+    return res.sendStatus(500);
+  }
+});
+
+app.get("/admin/search", async (req, res) => {
+  try {
+    if (typeof isAdmin === "function" ? !isAdmin(req) : true) return res.sendStatus(403);
+    const company = req.query.company || null;
+    const prefers = req.query.prefers || null;
+    const min_salary = req.query.min_salary ? Number(req.query.min_salary) : null;
+    const max_salary = req.query.max_salary ? Number(req.query.max_salary) : null;
+    const limit = req.query.limit ? Number(req.query.limit) : 1000;
+    const rows = await Profiles.searchProfiles({ company, prefers, min_salary, max_salary, limit });
+    return res.status(200).json({ count: rows.length, rows });
+  } catch (e) {
+    return res.sendStatus(500);
+  }
+});
+
+app.get("/admin/search.csv", async (req, res) => {
+  try {
+    if (typeof isAdmin === "function" ? !isAdmin(req) : true) return res.sendStatus(403);
+    const company = req.query.company || null;
+    const prefers = req.query.prefers || null;
+    const min_salary = req.query.min_salary ? Number(req.query.min_salary) : null;
+    const max_salary = req.query.max_salary ? Number(req.query.max_salary) : null;
+    const limit = req.query.limit ? Number(req.query.limit) : 1000;
+    const rows = await Profiles.searchProfiles({ company, prefers, min_salary, max_salary, limit });
+    const csv = profilesToCsv(rows);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"profiles_search.csv\"");
+    return res.status(200).send(csv);
+  } catch (e) {
     return res.sendStatus(500);
   }
 });
