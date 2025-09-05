@@ -1,7 +1,5 @@
 import express from "express";import { fileURLToPath } from "url";
-import dotenv from "dotenv";
-import path from "path";
-import { fileURLToPath } from "url";
+import dotenv from "dotenv";import { fileURLToPath } from "url";
 import fs from "fs";import { fileURLToPath } from "url";
 
 let _fetch = globalThis.fetch;
