@@ -1,4 +1,4 @@
-// server.js — ultra-thin: wires Express, WA webhook, intents, memory, and RAG.
+// server.js — ultra-thin: wires Express, WA webhook, intents, memory, and RAG + health/cron.
 
 import express from "express";
 import dotenv from "dotenv";
@@ -13,6 +13,7 @@ const __dirname = path.dirname(__filename);
 const VERIFY_TOKEN     = process.env.META_VERIFY_TOKEN   || process.env.VERIFY_TOKEN;
 const ACCESS_TOKEN     = process.env.META_ACCESS_TOKEN   || process.env.ACCESS_TOKEN;
 const PHONE_NUMBER_ID  = process.env.META_PHONE_NUMBER_ID|| process.env.PHONE_NUMBER_ID;
+const CRON_SECRET      = process.env.CRON_SECRET || "";
 const PORT             = process.env.PORT || 10000;
 
 let _fetch = globalThis.fetch;
@@ -178,6 +179,24 @@ const app = express();
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/", (_, res) => res.send("OK"));
+app.get("/healthz", (_, res) => res.status(200).json({ ok: true, uptime: process.uptime() }));
+
+// Secure cron endpoint for summaries (use Render Cron with header: x-cron-secret)
+app.post("/cron/summarize", async (req, res) => {
+  try {
+    const secret = req.headers["x-cron-secret"];
+    if (!CRON_SECRET || secret !== CRON_SECRET) return res.sendStatus(403);
+    const waId = req.query.waId || req.body?.waId;
+    if (!waId) return res.status(400).json({ error: "waId required" });
+
+    if (!summarizer?.buildAndSaveSummary) return res.status(500).json({ error: "summarizer not ready" });
+    const summary = await summarizer.buildAndSaveSummary(waId);
+    return res.status(200).json({ waId, summarized: !!summary });
+  } catch (e) {
+    console.error("cron summarize error:", e);
+    return res.sendStatus(500);
+  }
+});
 
 registerWebhook({
   app,
