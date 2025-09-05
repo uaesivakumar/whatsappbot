@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 
 dotenv.config();
 
+
 let RAG = {};
 try { RAG = await import("./src/rag/index.js"); } catch (e) { console.warn("RAG module unavailable:", e?.message || e); }
 const __filename = fileURLToPath(import.meta.url);
@@ -119,7 +120,6 @@ async function generateReply({ waId, text }) {
 import { registerWebhook } from "./src/wa/webhook.js";
 import { toCsv } from "./src/admin/export.js";
 import { profilesToCsv } from "./src/admin/export_profiles.js";
-let RAG = null;
 try { RAG = await import("./src/rag/index.js"); } catch { RAG = {}; }
 import { onUserTextCapture } from "./src/memory/capture.js";
 
