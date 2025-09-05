@@ -2,7 +2,6 @@ import express from "express";import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-import { fileURLToPath } from "url";
 import fs from "fs";import { fileURLToPath } from "url";
 
 let _fetch = globalThis.fetch;
@@ -12,6 +11,8 @@ if (typeof _fetch !== "function") {
 }
 
 dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const __dirname = path.dirname(__filename);
