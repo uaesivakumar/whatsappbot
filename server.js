@@ -1,6 +1,6 @@
 // server.js — WhatsApp Bot MVP (Siva-style with Intents + Memory + RAG)
 // Works on Render with environment variables; local knowledge base supported
-console.log("✅ Bot server starting with auto-deploy...");
+cconsole.log("Deploy test OK");
 
 import express from "express";
 import fetch from "node-fetch";
