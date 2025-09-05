@@ -177,6 +177,7 @@ async function onTextMessage({ waId, text }) {
 // Express + webhook/routes
 import { registerWebhook } from "./src/wa/webhook.js";
 import { toCsv } from "./src/admin/export.js";
+import { upsertProfile, getProfile } from "./src/memory/profiles.js";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
