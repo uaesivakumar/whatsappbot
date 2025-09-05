@@ -1,0 +1,7 @@
+[
+  { "name": "loans",      "examples": ["loan", "personal loan", "apply loan"], "base_confidence": 0.8 },
+  { "name": "cards",      "examples": ["credit card", "apply card", "Visa"],   "base_confidence": 0.8 },
+  { "name": "accounts",   "examples": ["open account", "salary account"],      "base_confidence": 0.8 },
+  { "name": "home_loan",  "examples": ["home loan", "mortgage"],               "base_confidence": 0.8 },
+  { "name": "general",    "examples": ["hello", "hi", "help", "menu"],         "base_confidence": 0.7 }
+]
