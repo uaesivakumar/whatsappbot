@@ -61,11 +61,13 @@ export async function reindexKnowledge() {
 }
 
 export async function retrieve(query, k = 5) {
+  const topk = Number(process.env.RAG_TOPK || k);
   const [qEmb] = await embed([query]);
   const client = await db();
-  const { data, error } = await client.rpc("match_kb", { query_embedding: qEmb, match_count: k });
+  const { data, error } = await client.rpc("match_kb", { query_embedding: qEmb, match_count: topk });
   if (error) throw new Error(error.message);
-  return data || [];
+  const min = Number(process.env.RAG_MIN_SIM || 0);
+  return (data || []).filter(h => !min || (h.similarity ?? 0) >= min);
 }
 
 async function llm(prompt, messages) {
@@ -88,8 +90,7 @@ export async function answer(userText, { memory, userId }) {
     const msg = [{ role: "user", content: `Context:\n${context}\n\nQuestion: ${userText}` }];
     const out = await llm(prompt, msg);
     return out || null;
-  } catch (e) {
-    console.warn("rag answer error:", e?.message);
+  } catch {
     return null;
   }
 }
@@ -104,8 +105,6 @@ export async function upsertOne(content, meta = {}) {
   return { id };
 }
 
-export default { reindexKnowledge, retrieve, answer, upsertOne };
-
 export async function countKb() {
   const client = await db();
   const { count, error } = await client.from("kb_chunks").select("*", { head: true, count: "exact" });
@@ -124,20 +123,4 @@ export async function listKb(n = 10) {
   return data || [];
 }
 
-export async function countKb() {
-  const client = await db();
-  const { count, error } = await client.from("kb_chunks").select("*", { head: true, count: "exact" });
-  if (error) throw new Error(error.message);
-  return count ?? 0;
-}
-
-export async function listKb(n = 10) {
-  const client = await db();
-  const { data, error } = await client
-    .from("kb_chunks")
-    .select("id, meta, updated_at, content")
-    .order("updated_at", { ascending: false })
-    .limit(Math.min(n, 50));
-  if (error) throw new Error(error.message);
-  return data || [];
-}
+export default { reindexKnowledge, retrieve, answer, upsertOne, countKb, listKb };
