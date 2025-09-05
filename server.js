@@ -321,3 +321,22 @@ app.post("/admin/kb", async (req, res) => {
     return res.sendStatus(500);
   }
 });
+
+app.get("/admin/kb/count", async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.sendStatus(403);
+    const RAG = await import("./src/rag/index.js");
+    const count = await RAG.countKb();
+    return res.status(200).json({ count });
+  } catch { return res.sendStatus(500); }
+});
+
+app.get("/admin/kb/list", async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.sendStatus(403);
+    const n = req.query.limit ? Number(req.query.limit) : 10;
+    const RAG = await import("./src/rag/index.js");
+    const rows = await RAG.listKb(n);
+    return res.status(200).json({ rows });
+  } catch { return res.sendStatus(500); }
+});

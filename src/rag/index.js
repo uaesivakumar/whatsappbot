@@ -105,3 +105,39 @@ export async function upsertOne(content, meta = {}) {
 }
 
 export default { reindexKnowledge, retrieve, answer, upsertOne };
+
+export async function countKb() {
+  const client = await db();
+  const { count, error } = await client.from("kb_chunks").select("*", { head: true, count: "exact" });
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
+export async function listKb(n = 10) {
+  const client = await db();
+  const { data, error } = await client
+    .from("kb_chunks")
+    .select("id, meta, updated_at, content")
+    .order("updated_at", { ascending: false })
+    .limit(Math.min(n, 50));
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function countKb() {
+  const client = await db();
+  const { count, error } = await client.from("kb_chunks").select("*", { head: true, count: "exact" });
+  if (error) throw new Error(error.message);
+  return count ?? 0;
+}
+
+export async function listKb(n = 10) {
+  const client = await db();
+  const { data, error } = await client
+    .from("kb_chunks")
+    .select("id, meta, updated_at, content")
+    .order("updated_at", { ascending: false })
+    .limit(Math.min(n, 50));
+  if (error) throw new Error(error.message);
+  return data || [];
+}
