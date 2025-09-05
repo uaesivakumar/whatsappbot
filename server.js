@@ -1,5 +1,6 @@
-// server.js — Siva-style MVP with Intents + Context Memory + RAG
-// Works on Render, no new npm deps (uses fs/path). Supabase logging still optional.
+// server.js — WhatsApp Bot MVP (Siva-style with Intents + Memory + RAG)
+// Works on Render with environment variables; local knowledge base supported
+console.log("✅ Bot server starting with auto-deploy...");
 
 import express from "express";
 import fetch from "node-fetch";
@@ -14,29 +15,23 @@ app.use(express.json());
 // =====================
 // ENV
 // =====================
-const VERIFY_TOKEN      = process.env.META_VERIFY_TOKEN;
-const ACCESS_TOKEN      = process.env.META_ACCESS_TOKEN;
-const PHONE_NUMBER_ID   = process.env.META_PHONE_NUMBER_ID;
-const OPENAI_API_KEY    = process.env.OPENAI_API_KEY;
-const API_VERSION       = process.env.GRAPH_API_VERSION || "v20.0";
-const PORT              = process.env.PORT || 10000;
+const VERIFY_TOKEN    = process.env.META_VERIFY_TOKEN;
+const ACCESS_TOKEN    = process.env.META_ACCESS_TOKEN;
+const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
+const OPENAI_API_KEY  = process.env.OPENAI_API_KEY;
+const API_VERSION     = process.env.GRAPH_API_VERSION || "v20.0";
+const PORT            = process.env.PORT || 10000;
 
 const SUPABASE_URL      = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const ADMIN_MSISDN      = (process.env.ADMIN_MSISDN || "").replace(/[^\d]/g, "");
 
 // =====================
-// Utils & logging
+// Utils & memory
 // =====================
 const log = (...args) => console.log(new Date().toISOString(), ...args);
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// =====================
-// In-memory contextual memory (per user)
-// shortTerm: last 10 msgs   profile: lightweight facts/preferences
-// =====================
-const memoryStore = new Map(); // from -> { shortTerm: [{role, content, ts}], profile: {} }
-
+const memoryStore = new Map(); // from -> { shortTerm: [{role, content}], profile: {} }
 function getMem(from) {
   if (!memoryStore.has(from)) memoryStore.set(from, { shortTerm: [], profile: {} });
   return memoryStore.get(from);
@@ -48,24 +43,22 @@ function pushMem(from, role, content) {
 }
 function summarizeShortTerm(from) {
   const mem = getMem(from);
-  // We’ll just compress to last 6 user/assistant lines to keep prompt small
-  const items = mem.shortTerm.slice(-6).map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
-  return items || "";
+  return mem.shortTerm
+    .slice(-6)
+    .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+    .join("\n");
 }
 
 // =====================
-// RAG — load local knowledge, chunk it, embed, cosine search
-// Folder: ./knowledge/*.md (you create this below)
+// RAG (knowledge folder)
 // =====================
 const knowledgeDir = path.join(process.cwd(), "knowledge");
-let kb = []; // [{ id, text, embedding: number[] }]
+let kb = [];
 
 function chunk(text, maxChars = 800) {
   const parts = [];
-  let i = 0;
-  while (i < text.length) {
+  for (let i = 0; i < text.length; i += maxChars) {
     parts.push(text.slice(i, i + maxChars));
-    i += maxChars;
   }
   return parts;
 }
@@ -74,7 +67,6 @@ function cosine(a, b) {
   for (let i = 0; i < a.length; i++) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
   return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-12);
 }
-
 async function embedTexts(texts) {
   if (!texts.length) return [];
   const r = await fetch("https://api.openai.com/v1/embeddings", {
@@ -85,161 +77,84 @@ async function embedTexts(texts) {
   const data = await r.json();
   return data.data?.map(d => d.embedding) || [];
 }
-
 async function loadKnowledge() {
   kb = [];
-  if (!fs.existsSync(knowledgeDir)) {
-    log("knowledge dir missing — creating", knowledgeDir);
-    fs.mkdirSync(knowledgeDir, { recursive: true });
-  }
-  // read all md/txt
+  if (!fs.existsSync(knowledgeDir)) fs.mkdirSync(knowledgeDir, { recursive: true });
   const files = fs.readdirSync(knowledgeDir).filter(f => /\.(md|txt)$/i.test(f));
   let chunks = [];
   for (const f of files) {
-    const full = path.join(knowledgeDir, f);
-    const txt = fs.readFileSync(full, "utf8");
-    const fileChunks = chunk(txt, 900).map((t, idx) => ({ id: `${f}#${idx+1}`, text: t }));
-    chunks = chunks.concat(fileChunks);
+    const txt = fs.readFileSync(path.join(knowledgeDir, f), "utf8");
+    chunks = chunks.concat(chunk(txt, 900).map((t, i) => ({ id: `${f}#${i+1}`, text: t })));
   }
-  if (!OPENAI_API_KEY) {
-    log("No OPENAI_API_KEY; knowledge loaded without embeddings (RAG disabled).");
-    kb = chunks.map((c) => ({ ...c, embedding: [] }));
-    return;
-  }
-  // embed in batches to be gentle
-  const batchSize = 16;
-  for (let i = 0; i < chunks.length; i += batchSize) {
-    const batch = chunks.slice(i, i + batchSize);
-    const embs = await embedTexts(batch.map(b => b.text));
-    for (let j = 0; j < batch.length; j++) {
-      kb.push({ id: batch[j].id, text: batch[j].text, embedding: embs[j] });
-    }
-    await sleep(200); // small pause
-  }
+  if (!OPENAI_API_KEY) { kb = chunks.map(c => ({ ...c, embedding: [] })); return; }
+  const embs = await embedTexts(chunks.map(c => c.text));
+  kb = chunks.map((c, i) => ({ ...c, embedding: embs[i] }));
   log(`Knowledge indexed: ${kb.length} chunks`);
 }
-
+await loadKnowledge();
 async function retrieve(query, topK = 4) {
   if (!OPENAI_API_KEY || !kb.length || !kb[0].embedding?.length) return [];
   const [qEmb] = await embedTexts([query]);
-  const scored = kb.map(k => ({ ...k, score: cosine(qEmb, k.embedding) }));
-  scored.sort((a,b) => b.score - a.score);
-  // filter weak matches
-  return scored.slice(0, topK).filter(s => s.score > 0.2);
+  return kb
+    .map(k => ({ ...k, score: cosine(qEmb, k.embedding) }))
+    .sort((a,b) => b.score - a.score)
+    .slice(0, topK)
+    .filter(s => s.score > 0.2);
 }
-
-// index once at boot
-await loadKnowledge();
 
 // =====================
 // Health
 // =====================
-app.get("/", (_req, res) => res.status(200).send("OK"));
-app.get("/healthz", (_req, res) => res.status(200).json({ ok: true, kb: kb.length }));
+app.get("/", (_req, res) => res.send("OK"));
+app.get("/healthz", (_req, res) => res.json({ ok: true, kb: kb.length }));
 
 // =====================
-// Webhook verify
+// Webhook
 // =====================
 app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    log("Webhook verified ✅");
-    return res.status(200).send(challenge);
+  if (req.query["hub.mode"] === "subscribe" && req.query["hub.verify_token"] === VERIFY_TOKEN) {
+    return res.status(200).send(req.query["hub.challenge"]);
   }
-  log("Webhook verify failed ❌");
   return res.sendStatus(403);
 });
 
-// =====================
-// Webhook receive
-// =====================
 app.post("/webhook", async (req, res) => {
-  log("Webhook POST hit");
   try {
     const entry = req.body?.entry?.[0];
-    const change = entry?.changes?.[0];
-    const value = change?.value;
-    const message = value?.messages?.[0];
-    const metadata = value?.metadata;
-    const toBusinessId = metadata?.phone_number_id;
-    const toDisplay = metadata?.display_phone_number;
-
+    const message = entry?.changes?.[0]?.value?.messages?.[0];
+    const metadata = entry?.changes?.[0]?.value?.metadata;
     if (!message) return res.sendStatus(200);
 
-    const from = String(message.from || "");
+    const from = message.from;
     const msgType = message.type;
-    let text = "";
-    if (msgType === "text") text = (message.text?.body || "").trim();
-    else if (msgType === "interactive") text = message.interactive?.button_reply?.title || message.interactive?.list_reply?.title || "";
-    else text = `[${msgType}]`;
+    const text = msgType === "text" ? message.text?.body?.trim() || "" : "";
 
-    log(`[IN] from=${from} type=${msgType} text=${JSON.stringify(text)}`);
-
-    // memory: store user utterance
+    log(`[IN] from=${from} text=${JSON.stringify(text)}`);
     pushMem(from, "user", text);
 
-    // optional DB log (inbound)
-    await logMsg({
-      wa_from: from,
-      wa_to: toDisplay || toBusinessId || PHONE_NUMBER_ID || null,
-      direction: "in",
-      body: text,
-      intent: null,
-      meta: { raw_type: msgType }
-    });
-
-    // admin commands (from you)
-    const fromDigits = from.replace(/[^\d]/g, "");
-    if (ADMIN_MSISDN && (fromDigits === ADMIN_MSISDN || fromDigits.endsWith(ADMIN_MSISDN)) && /^admin:/i.test(text)) {
+    // Admin commands
+    if (from.endsWith(ADMIN_MSISDN) && /^admin:/i.test(text)) {
       const adminReply = await handleAdminCommand(text);
       await sendWhatsAppText(from, adminReply);
       pushMem(from, "assistant", adminReply);
-      log(`[OUT] admin -> ${from} len=${adminReply.length}`);
-      await logMsg({
-        wa_from: toDisplay || toBusinessId,
-        wa_to: from,
-        direction: "out",
-        body: adminReply,
-        intent: "admin",
-        meta: null
-      });
       return res.sendStatus(200);
     }
 
-    // Route: intents → RAG → GPT
+    // Intents first
     const ruleReply = intentReply(text);
     let replyText;
-    let intentName = null;
-
     if (ruleReply) {
       replyText = ruleReply;
-      intentName = ruleReply.includes("Cheque book") ? "cheque"
-                 : ruleReply.includes("Branch hours") ? "hours"
-                 : ruleReply.includes("Card block") ? "card"
-                 : "rule";
     } else {
-      // RAG retrieve
-      const hits = await retrieve(text, 4);
-      const context = hits.map(h => `- (score ${h.score.toFixed(2)}) ${h.text}`).join("\n");
+      // Try RAG + GPT
+      const hits = await retrieve(text);
+      const context = hits.map(h => h.text).join("\n");
       replyText = await sivaAnswer(text, from, context);
-      intentName = hits.length ? "rag" : "gpt";
     }
 
     await sendWhatsAppText(from, replyText);
     pushMem(from, "assistant", replyText);
     log(`[OUT] -> ${from} len=${replyText.length}`);
-
-    await logMsg({
-      wa_from: toDisplay || toBusinessId,
-      wa_to: from,
-      direction: "out",
-      body: replyText,
-      intent: intentName,
-      meta: null
-    });
-
     res.sendStatus(200);
   } catch (e) {
     log("Webhook POST error:", e?.message || e);
@@ -248,58 +163,25 @@ app.post("/webhook", async (req, res) => {
 });
 
 // =====================
-// Intents (rules)
+// Intents
 // =====================
-function intentReply(text = "") {
-  const t = (text || "").toLowerCase();
-
-  if (/cheque|check\s*book|chequebook/.test(t)) {
-    return `Cheque book request:
-1) Open your banking app → Services → Cheque Book
-2) Choose account + leaves (25/50)
-3) Confirm address or branch pickup
-ETA: 3–5 working days.`;
-  }
-
-  if (/(branch|working|opening)\s*(hour|time)/.test(t)) {
-    return `Branch hours: Sun–Thu, 8:00–15:00.
-Need nearest branch? Send your area name.`;
-  }
-
-  if (/(lost|stolen|block).*(card)/.test(t)) {
-    return `Card block:
-• In-app → Cards → Block
-• Or call 04-XXX-XXXX (24/7)
-A replacement will be issued after verification.`;
-  }
-
-  if (/^(hi|hello|hey)\b/.test(t)) {
-    return "Hi! I’m Siva 🤖\nI remember our chat to keep replies relevant. Try “cheque book”, “branch hours”, or ask anything.";
-  }
-
+function intentReply(t = "") {
+  const text = t.toLowerCase();
+  if (/cheque/.test(text)) return "Cheque book request: Use app → Services → Cheque Book. ETA 3–5 days.";
+  if (/branch/.test(text)) return "Branch hours: Sun–Thu, 08:00–15:00.";
+  if (/block.*card|lost.*card/.test(text)) return "Card block: In app → Cards → Block or call support.";
+  if (/^hi|hello|hey/.test(text)) return "Hi! I’m Siva 🤖 Ask about cheque books, branch hours, or cards.";
   return null;
 }
 
 // =====================
-// Siva-style answer: Memory + RAG + GPT
+// GPT fallback with persona
 // =====================
 async function sivaAnswer(userText, from, ragContext) {
+  const history = summarizeShortTerm(from);
+  const system = `You are "Siva", a concise WhatsApp assistant.
+Facts:\n${ragContext || "(none)"}\nHistory:\n${history}`;
   try {
-    if (!OPENAI_API_KEY) return "I can help with banking FAQs. (GPT key not set).";
-    const shortHistory = summarizeShortTerm(from);
-    const persona = `You are "Siva", a concise WhatsApp assistant. 
-Tone: helpful, clear, brief (<= 4 sentences). 
-If the user is vague, ask 1 clarifying question. 
-Use BANK FACTS if relevant. If facts are missing, say what you need. 
-Avoid hallucinating numbers.`;
-
-    const system = `${persona}
----- BANK FACTS (top matches) ----
-${ragContext || "(none)"} 
----- RECENT CHAT ----
-${shortHistory || "(start of conversation)"} 
----- END CONTEXT ----`;
-
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
@@ -313,10 +195,9 @@ ${shortHistory || "(start of conversation)"}
       })
     });
     const data = await r.json();
-    return (data?.choices?.[0]?.message?.content || "Got it.").trim().slice(0, 900);
-  } catch (e) {
-    log("sivaAnswer error:", e?.message || e);
-    return "Sorry, I ran into an error.";
+    return data?.choices?.[0]?.message?.content?.trim() || "Got it.";
+  } catch {
+    return "Sorry, I hit an error.";
   }
 }
 
@@ -324,63 +205,28 @@ ${shortHistory || "(start of conversation)"}
 // WhatsApp send
 // =====================
 async function sendWhatsAppText(to, text) {
-  try {
-    const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
-    const payload = { messaging_product: "whatsapp", to, type: "text", text: { body: String(text || "").slice(0, 4000) } };
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ACCESS_TOKEN}` },
-      body: JSON.stringify(payload)
-    });
-    const body = await r.text();
-    if (!r.ok) log("WA send error:", r.status, body); else log("WA send ok:", r.status);
-  } catch (e) { log("sendWhatsAppText exception:", e?.message || e); }
-}
-
-// =====================
-// Optional Supabase REST logging
-// =====================
-async function logMsg(row) {
-  try {
-    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
-    const url = `${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/messages`;
-    const r = await fetch(url, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        "Content-Type": "application/json",
-        Prefer: "return=minimal"
-      },
-      body: JSON.stringify(row)
-    });
-    if (!r.ok) log("logMsg error:", r.status, await r.text());
-  } catch (e) { log("logMsg exception:", e?.message || e); }
+  const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
+  const payload = { messaging_product: "whatsapp", to, type: "text", text: { body: text.slice(0, 4000) } };
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ACCESS_TOKEN}` },
+    body: JSON.stringify(payload)
+  });
+  log("WA send", r.status);
 }
 
 // =====================
 // Admin commands
 // =====================
 async function handleAdminCommand(text) {
-  const t = (text || "").toLowerCase().trim();
-
-  if (t.startsWith("admin:ping")) return "pong ✅";
-
-  if (t.startsWith("admin:reindex")) {
-    await loadKnowledge();
-    return `Reindexed: ${kb.length} chunks`;
-  }
-
-  if (t.startsWith("admin:mem clear")) {
-    memoryStore.clear();
-    return "Memory cleared for all users.";
-  }
-
+  const t = text.toLowerCase();
+  if (t.includes("ping")) return "pong ✅";
+  if (t.includes("reindex")) { await loadKnowledge(); return `Reindexed: ${kb.length} chunks`; }
+  if (t.includes("mem clear")) { memoryStore.clear(); return "Memory cleared."; }
   return "Admin cmds: admin:ping | admin:reindex | admin:mem clear";
 }
 
 // =====================
 // Start
 // =====================
-
-console.log("This is the merged version we want");
+app.listen(PORT, () => log(`Server listening on ${PORT}, KB=${kb.length}`));
