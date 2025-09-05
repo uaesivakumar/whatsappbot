@@ -1,4 +1,4 @@
-// server.js — ultra-thin: Express, WA webhook, intents, memory, RAG + health/cron/admin.
+// server.js — Express wiring: WA webhook, intents, memory, RAG + health/cron/admin
 
 import express from "express";
 import dotenv from "dotenv";
@@ -17,13 +17,14 @@ const CRON_SECRET      = process.env.CRON_SECRET || "";
 const ADMIN_TOKEN      = process.env.ADMIN_TOKEN || "";
 const PORT             = process.env.PORT || 10000;
 
+// fetch shim for Node < 18
 let _fetch = globalThis.fetch;
 if (typeof _fetch !== "function") {
   const nf = await import("node-fetch");
   _fetch = nf.default;
 }
 
-// Load intents.json
+// ===== Load intents.json (optional) =====
 const intentsPath = path.join(__dirname, "intents.json");
 let INTENTS = [];
 try {
@@ -38,7 +39,7 @@ try {
   INTENTS = [];
 }
 
-// Modular imports
+// ===== Modular imports (best-effort) =====
 let detectIntent, routeIntent;
 try {
   const intentsRouter = await import(path.join(__dirname, "src/intents/index.js"));
@@ -59,7 +60,7 @@ try {
   console.warn("ℹ️ /src/rag/index.js not found; RAG fallback disabled.");
 }
 
-// Memory layer
+// ===== Memory + profiles =====
 let store = null, summarizer = null;
 try {
   store = await import("./src/memory/store.js");
@@ -70,7 +71,15 @@ try {
   console.warn("ℹ️ Memory layer not initialized:", e?.message);
 }
 
-// Short-term in-memory context
+let profiles = null;
+try {
+  profiles = await import("./src/memory/profiles.js");
+  console.log("✅ Profiles store ready");
+} catch (e) {
+  console.warn("ℹ️ Profiles store not found:", e?.message);
+}
+
+// ===== Short-term RAM context =====
 const MEMORY = new Map();
 function rememberShort(waId, role, text) {
   const arr = MEMORY.get(waId) || [];
@@ -82,7 +91,7 @@ function recentContext(waId) {
   return MEMORY.get(waId) || [];
 }
 
-// Fallback naive detect
+// ===== Naive detect fallback =====
 function naiveDetect(text) {
   const t = (text || "").toLowerCase();
   let best = { name: "unknown", confidence: 0.0 };
@@ -100,7 +109,7 @@ function naiveDetect(text) {
   return best;
 }
 
-// WA sender
+// ===== WA sender =====
 import { createSender } from "./src/wa/send.js";
 const { sendText } = createSender({
   accessToken: ACCESS_TOKEN,
@@ -108,7 +117,7 @@ const { sendText } = createSender({
   fetchImpl: _fetch
 });
 
-// Brain
+// ===== Brain =====
 async function generateReply({ waId, text }) {
   let intentRes;
   try {
@@ -152,7 +161,6 @@ async function generateReply({ waId, text }) {
   return "I didn’t fully catch that. Could you share a bit more or phrase it differently?";
 }
 
-// on-text pipeline
 async function onTextMessage({ waId, text }) {
   try {
     if (store?.appendMessage) await store.appendMessage({ waId, role: "user", text });
@@ -174,17 +182,17 @@ async function onTextMessage({ waId, text }) {
   }
 }
 
-// Express + webhook/routes
+// ===== Express + routes =====
 import { registerWebhook } from "./src/wa/webhook.js";
 import { toCsv } from "./src/admin/export.js";
-import { upsertProfile, getProfile } from "./src/memory/profiles.js";
+
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/", (_, res) => res.send("OK"));
 app.get("/healthz", (_, res) => res.status(200).json({ ok: true, uptime: process.uptime() }));
 
-// Secure cron endpoint for summaries
+// Cron summarize (secured)
 app.post("/cron/summarize", async (req, res) => {
   try {
     const secret = req.headers["x-cron-secret"];
@@ -200,20 +208,21 @@ app.post("/cron/summarize", async (req, res) => {
   }
 });
 
-// Admin summary endpoint (header: x-admin-secret)
+// Admin auth helper
+function isAdmin(req) {
+  const secret = req.headers["x-admin-secret"];
+  return (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
+}
+
+// Admin: latest summary
 app.get("/admin/summary", async (req, res) => {
   try {
-    const secret = req.headers["x-admin-secret"];
-    const valid = (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
-    if (!valid) return res.sendStatus(403);
-
+    if (!isAdmin(req)) return res.sendStatus(403);
     const waId = req.query.waId;
     if (!waId) return res.status(400).json({ error: "waId required" });
-
     if (!store?.getLatestSummary) return res.status(500).json({ error: "summary store not ready" });
     const latest = await store.getLatestSummary(waId);
     if (!latest) return res.status(404).json({ waId, summary: null, updated_at: null });
-
     return res.status(200).json({ waId, summary: latest.summary, updated_at: latest.updated_at });
   } catch (e) {
     console.error("admin summary error:", e);
@@ -221,17 +230,13 @@ app.get("/admin/summary", async (req, res) => {
   }
 });
 
-// Admin messages endpoint (header: x-admin-secret)
+// Admin: recent raw messages
 app.get("/admin/messages", async (req, res) => {
   try {
-    const secret = req.headers["x-admin-secret"];
-    const valid = (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
-    if (!valid) return res.sendStatus(403);
-
+    if (!isAdmin(req)) return res.sendStatus(403);
     const waId = req.query.waId;
     const limit = Math.min(parseInt(req.query.limit || "50", 10), 500);
     if (!waId) return res.status(400).json({ error: "waId required" });
-
     if (!store?.fetchRecentMessages) return res.status(500).json({ error: "message store not ready" });
     const rows = await store.fetchRecentMessages({ waId, limit });
     return res.status(200).json({ waId, count: rows.length, messages: rows });
@@ -241,17 +246,13 @@ app.get("/admin/messages", async (req, res) => {
   }
 });
 
-// Admin export CSV endpoint (header: x-admin-secret)
+// Admin: export CSV
 app.get("/admin/export.csv", async (req, res) => {
   try {
-    const secret = req.headers["x-admin-secret"];
-    const valid = (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
-    if (!valid) return res.sendStatus(403);
-
+    if (!isAdmin(req)) return res.sendStatus(403);
     const waId = req.query.waId;
     const limit = Math.min(parseInt(req.query.limit || "1000", 10), 5000);
     if (!waId) return res.status(400).json({ error: "waId required" });
-
     if (!store?.fetchRecentMessages) return res.status(500).json({ error: "message store not ready" });
     const rows = await store.fetchRecentMessages({ waId, limit });
     const csv = toCsv(rows);
@@ -260,6 +261,37 @@ app.get("/admin/export.csv", async (req, res) => {
     return res.status(200).send(csv);
   } catch (e) {
     console.error("admin export error:", e);
+    return res.sendStatus(500);
+  }
+});
+
+// Admin: profiles (GET/POST)
+app.get("/admin/profile", async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.sendStatus(403);
+    if (!profiles?.getProfile) return res.status(500).json({ error: "profiles store not ready" });
+    const waId = req.query.waId;
+    if (!waId) return res.status(400).json({ error: "waId required" });
+    const p = await profiles.getProfile(waId);
+    return res.status(200).json({ waId, profile: p });
+  } catch (e) {
+    console.error("admin getProfile error:", e);
+    return res.sendStatus(500);
+  }
+});
+
+app.post("/admin/profile", async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.sendStatus(403);
+    if (!profiles?.upsertProfile) return res.status(500).json({ error: "profiles store not ready" });
+    const waId = req.body?.waId || req.query.waId;
+    const { company, salary_aed, prefers, notes } = req.body || {};
+    if (!waId) return res.status(400).json({ error: "waId required" });
+    await profiles.upsertProfile(waId, { company, salary_aed, prefers, notes });
+    const p = await profiles.getProfile(waId);
+    return res.status(200).json({ waId, profile: p, saved: true });
+  } catch (e) {
+    console.error("admin upsertProfile error:", e);
     return res.sendStatus(500);
   }
 });
