@@ -157,6 +157,7 @@ import { registerWebhook } from "./src/wa/webhook.js";
 import { toCsv } from "./src/admin/export.js";
 import { profilesToCsv } from "./src/admin/export_profiles.js";
 import * as RAG from "./src/rag/index.js";
+import * as RAG from "./src/rag/index.js";
 import { onUserTextCapture } from "./src/memory/capture.js";
 
 const app = express();
@@ -358,6 +359,16 @@ async function onTextMessage({ waId, text }) {
     console.error("onTextMessage fatal error:", e);
   }
 }
+
+app.post("/admin/reindex", async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.sendStatus(403);
+    const r = await RAG.reindexKnowledge();
+    return res.status(200).json(r);
+  } catch (e) {
+    return res.sendStatus(500);
+  }
+});
 
 registerWebhook({ app, verifyToken: VERIFY_TOKEN, onTextMessage });
 
