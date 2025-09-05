@@ -8,3 +8,9 @@ A: Salary credit with acceptable employer, minimum salary ~ AED 5,000, internal 
 
 Q: Card recommendation basics?
 A: Match preference: cashback, travel, or no annual fee. Consider min salary thresholds.
+
+Q: Do you offer no annual fee cards?
+A: Yes, depending on eligibility and campaigns.
+
+Q: How do you choose a card for me?
+A: We look at salary, preferred rewards (cashback/travel/no fee), and current liabilities.
