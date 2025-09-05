@@ -157,6 +157,7 @@ async function generateReply({ waId, text }) {
 
 import { registerWebhook } from "./src/wa/webhook.js";
 import { toCsv } from "./src/admin/export.js";
+import { profilesToCsv } from "./src/admin/export_profiles.js";
 import { onUserTextCapture } from "./src/memory/capture.js";
 
 const app = express();
@@ -306,6 +307,25 @@ async function onTextMessage({ waId, text }) {
     console.error("onTextMessage fatal error:", e);
   }
 }
+
+// Admin: export all profiles CSV
+app.get("/admin/export_profiles.csv", async (req, res) => {
+  try {
+    const secret = req.headers["x-admin-secret"];
+    const ok = (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
+    if (!ok) return res.sendStatus(403);
+    if (!profiles?.listProfiles) return res.status(500).json({ error: "profiles store not ready" });
+    const limit = Math.min(parseInt(req.query.limit || "10000", 10), 20000);
+    const rows = await profiles.listProfiles(limit);
+    const csv = profilesToCsv(rows);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"profiles.csv\"");
+    return res.status(200).send(csv);
+  } catch (e) {
+    console.error("admin export_profiles error:", e);
+    return res.sendStatus(500);
+  }
+});
 
 registerWebhook({ app, verifyToken: VERIFY_TOKEN, onTextMessage });
 

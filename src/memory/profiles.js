@@ -20,9 +20,19 @@ export async function upsertProfile(waId, data) {
 export async function getProfile(waId) {
   const db = await client();
   const { data, error } = await db.from('profiles')
-    .select('wa_id, company, salary_aed, prefers, notes, updated_at')
+    .select('wa_id, company, salary_aed, prefers, liabilities_aed, notes, updated_at')
     .eq('wa_id', waId)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return data || null;
+}
+
+export async function listProfiles(limit = 10000) {
+  const db = await client();
+  const { data, error } = await db.from('profiles')
+    .select('wa_id, company, salary_aed, prefers, liabilities_aed, notes, updated_at')
+    .order('updated_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return data || [];
 }
