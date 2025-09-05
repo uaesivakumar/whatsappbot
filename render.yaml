@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: whatsapp-bot-mvp
+    env: docker
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: META_VERIFY_TOKEN
+        sync: false
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_PHONE_NUMBER_ID
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PORT
+        value: 10000
