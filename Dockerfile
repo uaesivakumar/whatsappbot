@@ -1,10 +1,8 @@
-# --- server deps (prod) ---
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-# --- console deps + build ---
 FROM node:20-alpine AS console_deps
 WORKDIR /app/console
 COPY console/package*.json ./
@@ -16,7 +14,6 @@ COPY --from=console_deps /app/console/node_modules ./console/node_modules
 COPY console ./console
 RUN npm --prefix console run build
 
-# --- final runner ---
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
