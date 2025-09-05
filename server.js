@@ -1,232 +1,241 @@
-// server.js — WhatsApp Bot MVP (Siva-style with Intents + Memory + RAG)
-// Works on Render with environment variables; local knowledge base supported
-cconsole.log("Deploy test OK");
+// server.js — WhatsApp Bot MVP (Modular Intents + Memory + RAG)
+// Works on Render with env vars; auto-detects your new /src/* modules when present.
 
 import express from "express";
-import fetch from "node-fetch";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+// If your Node version already has global fetch, no need for node-fetch.
+// render often uses Node 18+, so global fetch exists; otherwise fallback.
+let _fetch = globalThis.fetch;
+if (typeof _fetch !== "function") {
+  const nf = await import("node-fetch");
+  _fetch = nf.default;
+}
+
 dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const app = express();
-app.use(express.json());
+// ===== ENV =====
+const VERIFY_TOKEN     = process.env.META_VERIFY_TOKEN   || process.env.VERIFY_TOKEN;
+const ACCESS_TOKEN     = process.env.META_ACCESS_TOKEN   || process.env.ACCESS_TOKEN;
+const PHONE_NUMBER_ID  = process.env.META_PHONE_NUMBER_ID|| process.env.PHONE_NUMBER_ID;
+const PORT             = process.env.PORT || 10000;
 
-// =====================
-// ENV
-// =====================
-const VERIFY_TOKEN    = process.env.META_VERIFY_TOKEN;
-const ACCESS_TOKEN    = process.env.META_ACCESS_TOKEN;
-const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID;
-const OPENAI_API_KEY  = process.env.OPENAI_API_KEY;
-const API_VERSION     = process.env.GRAPH_API_VERSION || "v20.0";
-const PORT            = process.env.PORT || 10000;
-
-const SUPABASE_URL      = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
-const ADMIN_MSISDN      = (process.env.ADMIN_MSISDN || "").replace(/[^\d]/g, "");
-
-// =====================
-// Utils & memory
-// =====================
-const log = (...args) => console.log(new Date().toISOString(), ...args);
-
-const memoryStore = new Map(); // from -> { shortTerm: [{role, content}], profile: {} }
-function getMem(from) {
-  if (!memoryStore.has(from)) memoryStore.set(from, { shortTerm: [], profile: {} });
-  return memoryStore.get(from);
-}
-function pushMem(from, role, content) {
-  const mem = getMem(from);
-  mem.shortTerm.push({ role, content, ts: Date.now() });
-  if (mem.shortTerm.length > 10) mem.shortTerm.shift();
-}
-function summarizeShortTerm(from) {
-  const mem = getMem(from);
-  return mem.shortTerm
-    .slice(-6)
-    .map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
-    .join("\n");
-}
-
-// =====================
-// RAG (knowledge folder)
-// =====================
-const knowledgeDir = path.join(process.cwd(), "knowledge");
-let kb = [];
-
-function chunk(text, maxChars = 800) {
-  const parts = [];
-  for (let i = 0; i < text.length; i += maxChars) {
-    parts.push(text.slice(i, i + maxChars));
+// ===== Load Intents =====
+const intentsPath = path.join(__dirname, "intents.json");
+let INTENTS = [];
+try {
+  if (fs.existsSync(intentsPath)) {
+    INTENTS = JSON.parse(fs.readFileSync(intentsPath, "utf8"));
+    if (!Array.isArray(INTENTS)) throw new Error("intents.json must export an array");
+  } else {
+    console.warn("intents.json not found at project root; INTENTS will be empty []");
   }
-  return parts;
+} catch (err) {
+  console.error("Failed to load intents.json:", err.message);
+  INTENTS = [];
 }
-function cosine(a, b) {
-  let dot = 0, na = 0, nb = 0;
-  for (let i = 0; i < a.length; i++) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
-  return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-12);
+
+// ===== Optional Modular Imports (safe fallbacks if not ready) =====
+let detectIntent, routeIntent; // from /src/intents
+try {
+  const intentsRouter = await import(path.join(__dirname, "src/intents/index.js"));
+  // Support either named or default exports
+  detectIntent = intentsRouter.detectIntent || intentsRouter.default?.detectIntent;
+  routeIntent  = intentsRouter.routeIntent  || intentsRouter.default?.routeIntent
+              || intentsRouter.handleIntent || intentsRouter.default?.handleIntent;
+  if (detectIntent || routeIntent) {
+    console.log("✅ Using modular intents from /src/intents/index.js");
+  }
+} catch {
+  console.warn("ℹ️ /src/intents/index.js not found or not exporting detectIntent/routeIntent — using basic fallback.");
 }
-async function embedTexts(texts) {
-  if (!texts.length) return [];
-  const r = await fetch("https://api.openai.com/v1/embeddings", {
+
+// (Optional) dedicated classifier (if you split it)
+try {
+  if (!detectIntent) {
+    const cls = await import(path.join(__dirname, "src/intents/classifier.js"));
+    detectIntent = cls.detectIntent || cls.default?.detectIntent || detectIntent;
+    if (detectIntent) console.log("✅ Using classifier from /src/intents/classifier.js");
+  }
+} catch { /* ignore */ }
+
+// RAG module
+let ragAnswer;
+try {
+  const rag = await import(path.join(__dirname, "src/rag/index.js"));
+  ragAnswer = rag.answer || rag.default?.answer;
+  if (ragAnswer) console.log("✅ RAG enabled via /src/rag/index.js");
+} catch {
+  console.warn("ℹ️ /src/rag/index.js not found; RAG fallback disabled.");
+}
+
+// ===== Memory (in-memory short context; can be swapped for Supabase later) =====
+const MEMORY = new Map(); // key: waId, value: [{role:'user'|'bot', text, ts}]
+const remember = (waId, role, text) => {
+  const arr = MEMORY.get(waId) || [];
+  arr.push({ role, text, ts: Date.now() });
+  // keep last 20 messages (~10 turns)
+  if (arr.length > 20) arr.splice(0, arr.length - 20);
+  MEMORY.set(waId, arr);
+};
+const recentContext = (waId) => MEMORY.get(waId) || [];
+
+// ===== Fallback: naive regex intent if no classifier yet =====
+const naiveDetect = (text) => {
+  const t = (text || "").toLowerCase();
+  let best = { name: "unknown", confidence: 0.0 };
+  for (const it of INTENTS) {
+    const name = it.name || it.intent || "unknown";
+    const patterns = (it.examples || it.utterances || []);
+    for (const p of patterns) {
+      if (t.includes(String(p).toLowerCase())) {
+        best = { name, confidence: 0.7 };
+        break;
+      }
+    }
+    if (best.name !== "unknown") break;
+  }
+  return best;
+};
+
+// ===== WhatsApp send (local; can move to /src/wa/send.js later) =====
+async function sendText(to, text) {
+  const url = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`;
+  const body = {
+    messaging_product: "whatsapp",
+    to,
+    type: "text",
+    text: { body: text }
+  };
+  const res = await _fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
-    body: JSON.stringify({ model: "text-embedding-3-small", input: texts })
+    headers: {
+      Authorization: `Bearer ${ACCESS_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
   });
-  const data = await r.json();
-  return data.data?.map(d => d.embedding) || [];
-}
-async function loadKnowledge() {
-  kb = [];
-  if (!fs.existsSync(knowledgeDir)) fs.mkdirSync(knowledgeDir, { recursive: true });
-  const files = fs.readdirSync(knowledgeDir).filter(f => /\.(md|txt)$/i.test(f));
-  let chunks = [];
-  for (const f of files) {
-    const txt = fs.readFileSync(path.join(knowledgeDir, f), "utf8");
-    chunks = chunks.concat(chunk(txt, 900).map((t, i) => ({ id: `${f}#${i+1}`, text: t })));
-  }
-  if (!OPENAI_API_KEY) { kb = chunks.map(c => ({ ...c, embedding: [] })); return; }
-  const embs = await embedTexts(chunks.map(c => c.text));
-  kb = chunks.map((c, i) => ({ ...c, embedding: embs[i] }));
-  log(`Knowledge indexed: ${kb.length} chunks`);
-}
-await loadKnowledge();
-async function retrieve(query, topK = 4) {
-  if (!OPENAI_API_KEY || !kb.length || !kb[0].embedding?.length) return [];
-  const [qEmb] = await embedTexts([query]);
-  return kb
-    .map(k => ({ ...k, score: cosine(qEmb, k.embedding) }))
-    .sort((a,b) => b.score - a.score)
-    .slice(0, topK)
-    .filter(s => s.score > 0.2);
+
+  const ok = res.ok;
+  let info = "";
+  try { info = await res.text(); } catch {}
+  console.log("[OUT]", to, "len=" + (text?.length || 0), "status=" + res.status, info?.slice(0, 180));
+  return ok;
 }
 
-// =====================
+// ===== Brain =====
+async function generateReply({ waId, text }) {
+  // 1) Intent detect
+  let intentRes;
+  try {
+    if (typeof detectIntent === "function") {
+      intentRes = await detectIntent(text, INTENTS, { context: recentContext(waId) });
+    } else {
+      intentRes = naiveDetect(text);
+    }
+  } catch (err) {
+    console.error("detectIntent error:", err);
+    intentRes = { name: "unknown", confidence: 0.0 };
+  }
+
+  // 2) If confident, route to intent handler if available
+  if (intentRes && intentRes.name !== "unknown" && (intentRes.confidence ?? 0) >= 0.6) {
+    try {
+      if (typeof routeIntent === "function") {
+        const reply = await routeIntent(intentRes.name, text, {
+          intents: INTENTS,
+          memory: recentContext(waId),
+          waId
+        });
+        if (reply) return reply;
+      }
+    } catch (err) {
+      console.error("routeIntent error:", err);
+    }
+  }
+
+  // 3) RAG fallback
+  if (typeof ragAnswer === "function") {
+    try {
+      const reply = await ragAnswer(text, {
+        memory: recentContext(waId),
+        userId: waId,
+        // supply any kb/vector store params here when ready
+      });
+      if (reply) return reply;
+    } catch (err) {
+      console.error("RAG error:", err);
+    }
+  }
+
+  // 4) Last resort
+  return "I didn’t fully catch that. Could you share a bit more or phrase it differently?";
+}
+
+// ===== Express App =====
+const app = express();
+app.use(express.json({ limit: "2mb" }));
+
 // Health
-// =====================
-app.get("/", (_req, res) => res.send("OK"));
-app.get("/healthz", (_req, res) => res.json({ ok: true, kb: kb.length }));
+app.get("/", (_, res) => res.send("OK"));
 
-// =====================
-// Webhook
-// =====================
+// Verify webhook (Meta)
 app.get("/webhook", (req, res) => {
-  if (req.query["hub.mode"] === "subscribe" && req.query["hub.verify_token"] === VERIFY_TOKEN) {
-    return res.status(200).send(req.query["hub.challenge"]);
+  try {
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      console.log("✅ Webhook verified");
+      return res.status(200).send(challenge);
+    }
+    return res.sendStatus(403);
+  } catch {
+    return res.sendStatus(403);
   }
-  return res.sendStatus(403);
 });
 
+// Receive messages
 app.post("/webhook", async (req, res) => {
   try {
-    const entry = req.body?.entry?.[0];
-    const message = entry?.changes?.[0]?.value?.messages?.[0];
-    const metadata = entry?.changes?.[0]?.value?.metadata;
-    if (!message) return res.sendStatus(200);
-
-    const from = message.from;
-    const msgType = message.type;
-    const text = msgType === "text" ? message.text?.body?.trim() || "" : "";
-
-    log(`[IN] from=${from} text=${JSON.stringify(text)}`);
-    pushMem(from, "user", text);
-
-    // Admin commands
-    if (from.endsWith(ADMIN_MSISDN) && /^admin:/i.test(text)) {
-      const adminReply = await handleAdminCommand(text);
-      await sendWhatsAppText(from, adminReply);
-      pushMem(from, "assistant", adminReply);
-      return res.sendStatus(200);
-    }
-
-    // Intents first
-    const ruleReply = intentReply(text);
-    let replyText;
-    if (ruleReply) {
-      replyText = ruleReply;
-    } else {
-      // Try RAG + GPT
-      const hits = await retrieve(text);
-      const context = hits.map(h => h.text).join("\n");
-      replyText = await sivaAnswer(text, from, context);
-    }
-
-    await sendWhatsAppText(from, replyText);
-    pushMem(from, "assistant", replyText);
-    log(`[OUT] -> ${from} len=${replyText.length}`);
+    // Ack quickly to Meta
     res.sendStatus(200);
-  } catch (e) {
-    log("Webhook POST error:", e?.message || e);
-    res.sendStatus(200);
+
+    const body = req.body;
+    const entries = body?.entry || [];
+    for (const entry of entries) {
+      const changes = entry?.changes || [];
+      for (const change of changes) {
+        const messages = change?.value?.messages || [];
+        for (const msg of messages) {
+          if (!msg || msg.type !== "text") continue;
+
+          const waId = msg?.from;
+          const text = msg?.text?.body || "";
+          console.log("[IN]", "from=" + waId, "type=" + msg.type, "text=" + JSON.stringify(text));
+
+          // memory & reply
+          remember(waId, "user", text);
+          const reply = await generateReply({ waId, text });
+          await sendText(waId, reply);
+          remember(waId, "bot", reply);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Webhook POST error:", err);
+    // Already ACKed; just log failures
   }
 });
 
-// =====================
-// Intents
-// =====================
-function intentReply(t = "") {
-  const text = t.toLowerCase();
-  if (/cheque/.test(text)) return "Cheque book request: Use app → Services → Cheque Book. ETA 3–5 days.";
-  if (/branch/.test(text)) return "Branch hours: Sun–Thu, 08:00–15:00.";
-  if (/block.*card|lost.*card/.test(text)) return "Card block: In app → Cards → Block or call support.";
-  if (/^hi|hello|hey/.test(text)) return "Hi! I’m Siva 🤖 Ask about cheque books, branch hours, or cards.";
-  return null;
-}
-
-// =====================
-// GPT fallback with persona
-// =====================
-async function sivaAnswer(userText, from, ragContext) {
-  const history = summarizeShortTerm(from);
-  const system = `You are "Siva", a concise WhatsApp assistant.
-Facts:\n${ragContext || "(none)"}\nHistory:\n${history}`;
-  try {
-    const r = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: userText }
-        ],
-        temperature: 0.3
-      })
-    });
-    const data = await r.json();
-    return data?.choices?.[0]?.message?.content?.trim() || "Got it.";
-  } catch {
-    return "Sorry, I hit an error.";
+app.listen(PORT, () => {
+  console.log(`✅ Bot server running on port ${PORT}`);
+  if (!VERIFY_TOKEN || !ACCESS_TOKEN || !PHONE_NUMBER_ID) {
+    console.warn("⚠️ Missing one or more env vars: VERIFY_TOKEN / ACCESS_TOKEN / PHONE_NUMBER_ID");
   }
-}
-
-// =====================
-// WhatsApp send
-// =====================
-async function sendWhatsAppText(to, text) {
-  const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
-  const payload = { messaging_product: "whatsapp", to, type: "text", text: { body: text.slice(0, 4000) } };
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ACCESS_TOKEN}` },
-    body: JSON.stringify(payload)
-  });
-  log("WA send", r.status);
-}
-
-// =====================
-// Admin commands
-// =====================
-async function handleAdminCommand(text) {
-  const t = text.toLowerCase();
-  if (t.includes("ping")) return "pong ✅";
-  if (t.includes("reindex")) { await loadKnowledge(); return `Reindexed: ${kb.length} chunks`; }
-  if (t.includes("mem clear")) { memoryStore.clear(); return "Memory cleared."; }
-  return "Admin cmds: admin:ping | admin:reindex | admin:mem clear";
-}
-
-// =====================
-// Start
-// =====================
-app.listen(PORT, () => log(`Server listening on ${PORT}, KB=${kb.length}`));
+});
