@@ -1,43 +1,144 @@
-// server.js
-// WhatsApp Cloud API MVP — Express webhook + intents + OpenAI fallback
-// Logging included. Optional Supabase REST logging (no extra packages).
+// server.js — Siva-style MVP with Intents + Context Memory + RAG
+// Works on Render, no new npm deps (uses fs/path). Supabase logging still optional.
 
 import express from "express";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
 // =====================
-// ENV & constants
+// ENV
 // =====================
-const VERIFY_TOKEN      = process.env.META_VERIFY_TOKEN;       // you choose (e.g., "siva-verify-2025")
-const ACCESS_TOKEN      = process.env.META_ACCESS_TOKEN;       // from Meta (use long-lived in prod)
-const PHONE_NUMBER_ID   = process.env.META_PHONE_NUMBER_ID;    // numeric ID from Meta
-const OPENAI_API_KEY    = process.env.OPENAI_API_KEY;          // your OpenAI key
+const VERIFY_TOKEN      = process.env.META_VERIFY_TOKEN;
+const ACCESS_TOKEN      = process.env.META_ACCESS_TOKEN;
+const PHONE_NUMBER_ID   = process.env.META_PHONE_NUMBER_ID;
+const OPENAI_API_KEY    = process.env.OPENAI_API_KEY;
 const API_VERSION       = process.env.GRAPH_API_VERSION || "v20.0";
 const PORT              = process.env.PORT || 10000;
 
-// Optional Supabase REST logging (no extra deps)
-const SUPABASE_URL      = process.env.SUPABASE_URL;            // e.g., https://xxxx.supabase.co
+const SUPABASE_URL      = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
-const ADMIN_MSISDN      = (process.env.ADMIN_MSISDN || "").replace(/[^\d]/g, ""); // digits only
+const ADMIN_MSISDN      = (process.env.ADMIN_MSISDN || "").replace(/[^\d]/g, "");
 
 // =====================
-// Tiny logger
+// Utils & logging
 // =====================
 const log = (...args) => console.log(new Date().toISOString(), ...args);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// =====================
+// In-memory contextual memory (per user)
+// shortTerm: last 10 msgs   profile: lightweight facts/preferences
+// =====================
+const memoryStore = new Map(); // from -> { shortTerm: [{role, content, ts}], profile: {} }
+
+function getMem(from) {
+  if (!memoryStore.has(from)) memoryStore.set(from, { shortTerm: [], profile: {} });
+  return memoryStore.get(from);
+}
+function pushMem(from, role, content) {
+  const mem = getMem(from);
+  mem.shortTerm.push({ role, content, ts: Date.now() });
+  if (mem.shortTerm.length > 10) mem.shortTerm.shift();
+}
+function summarizeShortTerm(from) {
+  const mem = getMem(from);
+  // We’ll just compress to last 6 user/assistant lines to keep prompt small
+  const items = mem.shortTerm.slice(-6).map(m => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
+  return items || "";
+}
+
+// =====================
+// RAG — load local knowledge, chunk it, embed, cosine search
+// Folder: ./knowledge/*.md (you create this below)
+// =====================
+const knowledgeDir = path.join(process.cwd(), "knowledge");
+let kb = []; // [{ id, text, embedding: number[] }]
+
+function chunk(text, maxChars = 800) {
+  const parts = [];
+  let i = 0;
+  while (i < text.length) {
+    parts.push(text.slice(i, i + maxChars));
+    i += maxChars;
+  }
+  return parts;
+}
+function cosine(a, b) {
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length; i++) { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
+  return dot / (Math.sqrt(na) * Math.sqrt(nb) + 1e-12);
+}
+
+async function embedTexts(texts) {
+  if (!texts.length) return [];
+  const r = await fetch("https://api.openai.com/v1/embeddings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
+    body: JSON.stringify({ model: "text-embedding-3-small", input: texts })
+  });
+  const data = await r.json();
+  return data.data?.map(d => d.embedding) || [];
+}
+
+async function loadKnowledge() {
+  kb = [];
+  if (!fs.existsSync(knowledgeDir)) {
+    log("knowledge dir missing — creating", knowledgeDir);
+    fs.mkdirSync(knowledgeDir, { recursive: true });
+  }
+  // read all md/txt
+  const files = fs.readdirSync(knowledgeDir).filter(f => /\.(md|txt)$/i.test(f));
+  let chunks = [];
+  for (const f of files) {
+    const full = path.join(knowledgeDir, f);
+    const txt = fs.readFileSync(full, "utf8");
+    const fileChunks = chunk(txt, 900).map((t, idx) => ({ id: `${f}#${idx+1}`, text: t }));
+    chunks = chunks.concat(fileChunks);
+  }
+  if (!OPENAI_API_KEY) {
+    log("No OPENAI_API_KEY; knowledge loaded without embeddings (RAG disabled).");
+    kb = chunks.map((c) => ({ ...c, embedding: [] }));
+    return;
+  }
+  // embed in batches to be gentle
+  const batchSize = 16;
+  for (let i = 0; i < chunks.length; i += batchSize) {
+    const batch = chunks.slice(i, i + batchSize);
+    const embs = await embedTexts(batch.map(b => b.text));
+    for (let j = 0; j < batch.length; j++) {
+      kb.push({ id: batch[j].id, text: batch[j].text, embedding: embs[j] });
+    }
+    await sleep(200); // small pause
+  }
+  log(`Knowledge indexed: ${kb.length} chunks`);
+}
+
+async function retrieve(query, topK = 4) {
+  if (!OPENAI_API_KEY || !kb.length || !kb[0].embedding?.length) return [];
+  const [qEmb] = await embedTexts([query]);
+  const scored = kb.map(k => ({ ...k, score: cosine(qEmb, k.embedding) }));
+  scored.sort((a,b) => b.score - a.score);
+  // filter weak matches
+  return scored.slice(0, topK).filter(s => s.score > 0.2);
+}
+
+// index once at boot
+await loadKnowledge();
 
 // =====================
 // Health
 // =====================
 app.get("/", (_req, res) => res.status(200).send("OK"));
-app.get("/healthz", (_req, res) => res.status(200).json({ ok: true }));
+app.get("/healthz", (_req, res) => res.status(200).json({ ok: true, kb: kb.length }));
 
 // =====================
-// Webhook verification (GET)
+// Webhook verify
 // =====================
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -52,47 +153,34 @@ app.get("/webhook", (req, res) => {
 });
 
 // =====================
-// Webhook receiver (POST)
+// Webhook receive
 // =====================
 app.post("/webhook", async (req, res) => {
   log("Webhook POST hit");
-
   try {
     const entry = req.body?.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
-
-    // WhatsApp may send different notifications (messages, statuses, etc.)
     const message = value?.messages?.[0];
     const metadata = value?.metadata;
     const toBusinessId = metadata?.phone_number_id;
     const toDisplay = metadata?.display_phone_number;
 
-    if (!message) {
-      // Not a user message — ack and exit (delivery status, etc.)
-      res.sendStatus(200);
-      return;
-    }
+    if (!message) return res.sendStatus(200);
 
-    const from = String(message.from || ""); // sender's msisdn (digits)
+    const from = String(message.from || "");
     const msgType = message.type;
-
-    // Extract text gracefully
     let text = "";
-    if (msgType === "text") {
-      text = (message.text?.body || "").trim();
-    } else if (msgType === "interactive") {
-      text =
-        message.interactive?.button_reply?.title ||
-        message.interactive?.list_reply?.title ||
-        "";
-    } else {
-      text = `[${msgType}]`;
-    }
+    if (msgType === "text") text = (message.text?.body || "").trim();
+    else if (msgType === "interactive") text = message.interactive?.button_reply?.title || message.interactive?.list_reply?.title || "";
+    else text = `[${msgType}]`;
 
     log(`[IN] from=${from} type=${msgType} text=${JSON.stringify(text)}`);
 
-    // ---- Optional DB log (inbound)
+    // memory: store user utterance
+    pushMem(from, "user", text);
+
+    // optional DB log (inbound)
     await logMsg({
       wa_from: from,
       wa_to: toDisplay || toBusinessId || PHONE_NUMBER_ID || null,
@@ -102,15 +190,12 @@ app.post("/webhook", async (req, res) => {
       meta: { raw_type: msgType }
     });
 
-    // ---- Admin commands (from your number)
+    // admin commands (from you)
     const fromDigits = from.replace(/[^\d]/g, "");
-    if (
-      ADMIN_MSISDN &&
-      (fromDigits === ADMIN_MSISDN || fromDigits.endsWith(ADMIN_MSISDN)) &&
-      /^admin:/i.test(text)
-    ) {
+    if (ADMIN_MSISDN && (fromDigits === ADMIN_MSISDN || fromDigits.endsWith(ADMIN_MSISDN)) && /^admin:/i.test(text)) {
       const adminReply = await handleAdminCommand(text);
       await sendWhatsAppText(from, adminReply);
+      pushMem(from, "assistant", adminReply);
       log(`[OUT] admin -> ${from} len=${adminReply.length}`);
       await logMsg({
         wa_from: toDisplay || toBusinessId,
@@ -120,27 +205,31 @@ app.post("/webhook", async (req, res) => {
         intent: "admin",
         meta: null
       });
-      res.sendStatus(200);
-      return;
+      return res.sendStatus(200);
     }
 
-    // ---- Route: intents first, then GPT fallback
+    // Route: intents → RAG → GPT
     const ruleReply = intentReply(text);
-    const replyText = ruleReply ?? (await openAIAnswer(text)) ?? "Got it.";
+    let replyText;
+    let intentName = null;
+
+    if (ruleReply) {
+      replyText = ruleReply;
+      intentName = ruleReply.includes("Cheque book") ? "cheque"
+                 : ruleReply.includes("Branch hours") ? "hours"
+                 : ruleReply.includes("Card block") ? "card"
+                 : "rule";
+    } else {
+      // RAG retrieve
+      const hits = await retrieve(text, 4);
+      const context = hits.map(h => `- (score ${h.score.toFixed(2)}) ${h.text}`).join("\n");
+      replyText = await sivaAnswer(text, from, context);
+      intentName = hits.length ? "rag" : "gpt";
+    }
 
     await sendWhatsAppText(from, replyText);
+    pushMem(from, "assistant", replyText);
     log(`[OUT] -> ${from} len=${replyText.length}`);
-
-    // ---- Optional DB log (outbound)
-    const intentName = ruleReply
-      ? (/Cheque book/i.test(ruleReply)
-          ? "cheque"
-          : /Branch hours/i.test(ruleReply)
-          ? "hours"
-          : /Card block/i.test(ruleReply)
-          ? "card"
-          : "rule")
-      : "gpt";
 
     await logMsg({
       wa_from: toDisplay || toBusinessId,
@@ -151,16 +240,15 @@ app.post("/webhook", async (req, res) => {
       meta: null
     });
 
-    // Always ack quickly
     res.sendStatus(200);
   } catch (e) {
     log("Webhook POST error:", e?.message || e);
-    res.sendStatus(200); // ack to avoid retries
+    res.sendStatus(200);
   }
 });
 
 // =====================
-// Intents (rule replies)
+// Intents (rules)
 // =====================
 function intentReply(text = "") {
   const t = (text || "").toLowerCase();
@@ -186,80 +274,71 @@ A replacement will be issued after verification.`;
   }
 
   if (/^(hi|hello|hey)\b/.test(t)) {
-    return "Hi! I’m Siva 🤖\nI can help with banking FAQs (cheque book, branch hours, card block) or general questions.";
+    return "Hi! I’m Siva 🤖\nI remember our chat to keep replies relevant. Try “cheque book”, “branch hours”, or ask anything.";
   }
 
-  return null; // fall back to GPT
+  return null;
 }
 
 // =====================
-// OpenAI fallback
+// Siva-style answer: Memory + RAG + GPT
 // =====================
-async function openAIAnswer(userText) {
+async function sivaAnswer(userText, from, ragContext) {
   try {
-    if (!OPENAI_API_KEY) return null;
+    if (!OPENAI_API_KEY) return "I can help with banking FAQs. (GPT key not set).";
+    const shortHistory = summarizeShortTerm(from);
+    const persona = `You are "Siva", a concise WhatsApp assistant. 
+Tone: helpful, clear, brief (<= 4 sentences). 
+If the user is vague, ask 1 clarifying question. 
+Use BANK FACTS if relevant. If facts are missing, say what you need. 
+Avoid hallucinating numbers.`;
 
-    const prompt = `You are Siva's WhatsApp assistant for banking-style FAQs.
-- Be concise (<= 4 sentences).
-- If unsure, ask a brief follow-up.
-User: ${userText}`;
+    const system = `${persona}
+---- BANK FACTS (top matches) ----
+${ragContext || "(none)"} 
+---- RECENT CHAT ----
+${shortHistory || "(start of conversation)"} 
+---- END CONTEXT ----`;
 
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENAI_API_KEY}` },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.4
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: userText }
+        ],
+        temperature: 0.3
       })
     });
-
     const data = await r.json();
-    return (data?.choices?.[0]?.message?.content || "").trim().slice(0, 900);
+    return (data?.choices?.[0]?.message?.content || "Got it.").trim().slice(0, 900);
   } catch (e) {
-    log("openAIAnswer error:", e?.message || e);
-    return null;
+    log("sivaAnswer error:", e?.message || e);
+    return "Sorry, I ran into an error.";
   }
 }
 
 // =====================
-// WhatsApp send (text)
+// WhatsApp send
 // =====================
 async function sendWhatsAppText(to, text) {
   try {
     const url = `https://graph.facebook.com/${API_VERSION}/${PHONE_NUMBER_ID}/messages`;
-    const payload = {
-      messaging_product: "whatsapp",
-      to,
-      type: "text",
-      text: { body: String(text || "").slice(0, 4000) }
-    };
-
+    const payload = { messaging_product: "whatsapp", to, type: "text", text: { body: String(text || "").slice(0, 4000) } };
     const r = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${ACCESS_TOKEN}`
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ACCESS_TOKEN}` },
       body: JSON.stringify(payload)
     });
-
     const body = await r.text();
-    if (!r.ok) {
-      log("WA send error:", r.status, body);
-    } else {
-      log("WA send ok:", r.status);
-    }
-  } catch (e) {
-    log("sendWhatsAppText exception:", e?.message || e);
-  }
+    if (!r.ok) log("WA send error:", r.status, body); else log("WA send ok:", r.status);
+  } catch (e) { log("sendWhatsAppText exception:", e?.message || e); }
 }
 
 // =====================
-// Optional: Supabase REST logging
+// Optional Supabase REST logging
 // =====================
 async function logMsg(row) {
   try {
@@ -275,64 +354,33 @@ async function logMsg(row) {
       },
       body: JSON.stringify(row)
     });
-    if (!r.ok) {
-      const t = await r.text();
-      log("logMsg error:", r.status, t);
-    }
-  } catch (e) {
-    log("logMsg exception:", e?.message || e);
-  }
+    if (!r.ok) log("logMsg error:", r.status, await r.text());
+  } catch (e) { log("logMsg exception:", e?.message || e); }
 }
 
 // =====================
 // Admin commands
 // =====================
 async function handleAdminCommand(text) {
-  const t = (text || "").toLowerCase();
+  const t = (text || "").toLowerCase().trim();
 
-  if (/^admin:\s*ping/.test(t)) return "pong ✅";
+  if (t.startsWith("admin:ping")) return "pong ✅";
 
-  if (/^admin:\s*stats/.test(t)) {
-    const stats = await fetchStats24h();
-    return `24h stats:
-Total: ${stats.total}
-By intent: cheque=${stats.cheque}, hours=${stats.hours}, card=${stats.card}, gpt=${stats.gpt}`;
+  if (t.startsWith("admin:reindex")) {
+    await loadKnowledge();
+    return `Reindexed: ${kb.length} chunks`;
   }
 
-  return "Admin cmds: admin:ping | admin:stats";
-}
-
-async function fetchStats24h() {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    return { total: 0, cheque: 0, hours: 0, card: 0, gpt: 0 };
-  }
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const base = `${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/messages`;
-  const headers = {
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    Prefer: "count=exact"
-  };
-
-  async function countFor(qs) {
-    const r = await fetch(`${base}?${qs}`, { headers });
-    const range = r.headers.get("content-range") || "";
-    const m = range.match(/\/(\d+)$/);
-    return m ? Number(m[1]) : 0;
-    // (Supabase returns count in the Content-Range header)
+  if (t.startsWith("admin:mem clear")) {
+    memoryStore.clear();
+    return "Memory cleared for all users.";
   }
 
-  const enc = encodeURIComponent;
-  const total = await countFor(`ts=gte.${enc(since)}&select=id`);
-  const cheque = await countFor(`ts=gte.${enc(since)}&intent=eq.cheque&select=id`);
-  const hours  = await countFor(`ts=gte.${enc(since)}&intent=eq.hours&select=id`);
-  const card   = await countFor(`ts=gte.${enc(since)}&intent=eq.card&select=id`);
-  const gpt    = await countFor(`ts=gte.${enc(since)}&intent=eq.gpt&select=id`);
-  return { total, cheque, hours, card, gpt };
+  return "Admin cmds: admin:ping | admin:reindex | admin:mem clear";
 }
 
 // =====================
 // Start
 // =====================
-app.listen(PORT, () => log(`Server listening on ${PORT}`));
-// stop
+
+console.log("This is the merged version we want");
