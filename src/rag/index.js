@@ -107,9 +107,9 @@ export async function upsertOne(content, meta = {}) {
 
 export async function countKb() {
   const client = await db();
-  const { count, error } = await client.from("kb_chunks").select("*", { head: true, count: "exact" });
+  const { data, count, error } = await client.from("kb_chunks").select("id", { head: true, count: "exact" });
   if (error) throw new Error(error.message);
-  return count ?? 0;
+  return count ?? (data ? data.length : 0);
 }
 
 export async function listKb(n = 10) {
