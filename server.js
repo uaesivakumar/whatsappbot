@@ -176,6 +176,7 @@ async function onTextMessage({ waId, text }) {
 
 // Express + webhook/routes
 import { registerWebhook } from "./src/wa/webhook.js";
+import { toCsv } from "./src/admin/export.js";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
@@ -235,6 +236,29 @@ app.get("/admin/messages", async (req, res) => {
     return res.status(200).json({ waId, count: rows.length, messages: rows });
   } catch (e) {
     console.error("admin messages error:", e);
+    return res.sendStatus(500);
+  }
+});
+
+// Admin export CSV endpoint (header: x-admin-secret)
+app.get("/admin/export.csv", async (req, res) => {
+  try {
+    const secret = req.headers["x-admin-secret"];
+    const valid = (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
+    if (!valid) return res.sendStatus(403);
+
+    const waId = req.query.waId;
+    const limit = Math.min(parseInt(req.query.limit || "1000", 10), 5000);
+    if (!waId) return res.status(400).json({ error: "waId required" });
+
+    if (!store?.fetchRecentMessages) return res.status(500).json({ error: "message store not ready" });
+    const rows = await store.fetchRecentMessages({ waId, limit });
+    const csv = toCsv(rows);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="chat_${waId}.csv"`);
+    return res.status(200).send(csv);
+  } catch (e) {
+    console.error("admin export error:", e);
     return res.sendStatus(500);
   }
 });
