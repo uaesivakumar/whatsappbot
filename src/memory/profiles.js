@@ -36,3 +36,18 @@ export async function listProfiles(limit = 10000) {
   if (error) throw new Error(error.message);
   return data || [];
 }
+
+export async function searchProfiles({ company, prefers, min_salary, max_salary, limit = 1000 }) {
+  const db = await client();
+  let q = db.from('profiles')
+    .select('wa_id, company, salary_aed, prefers, liabilities_aed, notes, updated_at')
+    .order('updated_at', { ascending: false })
+    .limit(Math.min(limit, 10000));
+  if (company) q = q.ilike('company', `%${company}%`);
+  if (prefers) q = q.eq('prefers', prefers);
+  if (min_salary != null) q = q.gte('salary_aed', min_salary);
+  if (max_salary != null) q = q.lte('salary_aed', max_salary);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return data || [];
+}

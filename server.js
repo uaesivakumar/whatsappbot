@@ -158,6 +158,7 @@ async function generateReply({ waId, text }) {
 import { registerWebhook } from "./src/wa/webhook.js";
 import { toCsv } from "./src/admin/export.js";
 import { profilesToCsv } from "./src/admin/export_profiles.js";
+import * as Profiles from "./src/memory/profiles.js";
 import { onUserTextCapture } from "./src/memory/capture.js";
 
 const app = express();
@@ -309,20 +310,41 @@ async function onTextMessage({ waId, text }) {
 }
 
 // Admin: export all profiles CSV
-app.get("/admin/export_profiles.csv", async (req, res) => {
+app.get("/admin/search", async (req, res) => {
   try {
     const secret = req.headers["x-admin-secret"];
     const ok = (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
     if (!ok) return res.sendStatus(403);
-    if (!profiles?.listProfiles) return res.status(500).json({ error: "profiles store not ready" });
-    const limit = Math.min(parseInt(req.query.limit || "10000", 10), 20000);
-    const rows = await profiles.listProfiles(limit);
+    const company = req.query.company || null;
+    const prefers = req.query.prefers || null;
+    const min_salary = req.query.min_salary ? Number(req.query.min_salary) : null;
+    const max_salary = req.query.max_salary ? Number(req.query.max_salary) : null;
+    const limit = req.query.limit ? Number(req.query.limit) : 1000;
+    const rows = await Profiles.searchProfiles({ company, prefers, min_salary, max_salary, limit });
+    return res.status(200).json({ count: rows.length, rows });
+  } catch (e) {
+    console.error("admin search error:", e);
+    return res.sendStatus(500);
+  }
+});
+
+app.get("/admin/search.csv", async (req, res) => {
+  try {
+    const secret = req.headers["x-admin-secret"];
+    const ok = (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
+    if (!ok) return res.sendStatus(403);
+    const company = req.query.company || null;
+    const prefers = req.query.prefers || null;
+    const min_salary = req.query.min_salary ? Number(req.query.min_salary) : null;
+    const max_salary = req.query.max_salary ? Number(req.query.max_salary) : null;
+    const limit = req.query.limit ? Number(req.query.limit) : 1000;
+    const rows = await Profiles.searchProfiles({ company, prefers, min_salary, max_salary, limit });
     const csv = profilesToCsv(rows);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", "attachment; filename=\"profiles.csv\"");
+    res.setHeader("Content-Disposition", "attachment; filename=\"profiles_search.csv\"");
     return res.status(200).send(csv);
   } catch (e) {
-    console.error("admin export_profiles error:", e);
+    console.error("admin search.csv error:", e);
     return res.sendStatus(500);
   }
 });
