@@ -294,3 +294,30 @@ async function onTextMessage({ waId, text }) {
 registerWebhook({ app, verifyToken: VERIFY_TOKEN, onTextMessage });
 
 app.listen(PORT, () => { console.log(`✅ Bot server running on port ${PORT}`); });
+
+app.get("/admin/rag", async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.sendStatus(403);
+    const q = req.query.q || "";
+    if (!q) return res.status(400).json({ error: "q required" });
+    const RAG = await import("./src/rag/index.js");
+    const hits = await RAG.retrieve(q, 5);
+    const ans = await RAG.answer(q, { memory: [], userId: "admin" });
+    return res.status(200).json({ hits, answer: ans });
+  } catch {
+    return res.sendStatus(500);
+  }
+});
+
+app.post("/admin/kb", async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.sendStatus(403);
+    const { content, meta } = req.body || {};
+    if (!content) return res.status(400).json({ error: "content required" });
+    const RAG = await import("./src/rag/index.js");
+    const r = await RAG.upsertOne(content, meta || {});
+    return res.status(200).json(r);
+  } catch {
+    return res.sendStatus(500);
+  }
+});
