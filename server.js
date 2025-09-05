@@ -126,6 +126,12 @@ import { onUserTextCapture } from "./src/memory/capture.js";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
+app.use("/console", express.static(path.join(__dirname, "console/dist")));
+app.get("/console/*", (_, res) => {
+  res.sendFile(path.join(__dirname, "console/dist/index.html"));
+});
+
+
 app.get("/", (_, res) => res.send("OK"));
 app.get("/healthz", (_, res) => res.status(200).json({ ok: true, uptime: process.uptime() }));
 
