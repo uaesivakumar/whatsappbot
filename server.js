@@ -198,7 +198,7 @@ app.post("/cron/summarize", async (req, res) => {
   }
 });
 
-// Admin summary endpoint (header: x-admin-secret; uses ADMIN_TOKEN or CRON_SECRET)
+// Admin summary endpoint (header: x-admin-secret)
 app.get("/admin/summary", async (req, res) => {
   try {
     const secret = req.headers["x-admin-secret"];
@@ -215,6 +215,26 @@ app.get("/admin/summary", async (req, res) => {
     return res.status(200).json({ waId, summary: latest.summary, updated_at: latest.updated_at });
   } catch (e) {
     console.error("admin summary error:", e);
+    return res.sendStatus(500);
+  }
+});
+
+// Admin messages endpoint (header: x-admin-secret)
+app.get("/admin/messages", async (req, res) => {
+  try {
+    const secret = req.headers["x-admin-secret"];
+    const valid = (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
+    if (!valid) return res.sendStatus(403);
+
+    const waId = req.query.waId;
+    const limit = Math.min(parseInt(req.query.limit || "50", 10), 500);
+    if (!waId) return res.status(400).json({ error: "waId required" });
+
+    if (!store?.fetchRecentMessages) return res.status(500).json({ error: "message store not ready" });
+    const rows = await store.fetchRecentMessages({ waId, limit });
+    return res.status(200).json({ waId, count: rows.length, messages: rows });
+  } catch (e) {
+    console.error("admin messages error:", e);
     return res.sendStatus(500);
   }
 });
