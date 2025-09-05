@@ -1,5 +1,3 @@
-// server.js — Express wiring: WA webhook, intents, memory, RAG + health/cron/admin
-
 import express from "express";
 import dotenv from "dotenv";
 import fs from "fs";
@@ -158,9 +156,6 @@ async function generateReply({ waId, text }) {
 import { registerWebhook } from "./src/wa/webhook.js";
 import { toCsv } from "./src/admin/export.js";
 import { profilesToCsv } from "./src/admin/export_profiles.js";
-import * as Profiles from "./src/memory/profiles.js";
-import { profilesToCsv } from "./src/admin/export_profiles.js";
-import * as Profiles from "./src/memory/profiles.js";
 import { onUserTextCapture } from "./src/memory/capture.js";
 
 const app = express();
@@ -256,13 +251,66 @@ app.post("/admin/profile", async (req, res) => {
     if (!isAdmin(req)) return res.sendStatus(403);
     if (!profiles?.upsertProfile) return res.status(500).json({ error: "profiles store not ready" });
     const waId = req.body?.waId || req.query.waId;
-    const { company, salary_aed, prefers, notes } = req.body || {};
+    const { company, salary_aed, prefers, notes, liabilities_aed } = req.body || {};
     if (!waId) return res.status(400).json({ error: "waId required" });
-    await profiles.upsertProfile(waId, { company, salary_aed, prefers, notes });
+    await profiles.upsertProfile(waId, { company, salary_aed, prefers, notes, liabilities_aed });
     const p = await profiles.getProfile(waId);
     return res.status(200).json({ waId, profile: p, saved: true });
   } catch (e) {
     console.error("admin upsertProfile error:", e);
+    return res.sendStatus(500);
+  }
+});
+
+app.get("/admin/export_profiles.csv", async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.sendStatus(403);
+    if (!profiles?.listProfiles) return res.status(500).json({ error: "profiles store not ready" });
+    const limit = Math.min(parseInt(req.query.limit || "10000", 10), 20000);
+    const rows = await profiles.listProfiles(limit);
+    const csv = profilesToCsv(rows);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"profiles.csv\"");
+    return res.status(200).send(csv);
+  } catch (e) {
+    console.error("admin export_profiles error:", e);
+    return res.sendStatus(500);
+  }
+});
+
+app.get("/admin/search", async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.sendStatus(403);
+    if (!profiles?.searchProfiles) return res.status(500).json({ error: "profiles store not ready" });
+    const company = req.query.company || null;
+    const prefers = req.query.prefers || null;
+    const min_salary = req.query.min_salary ? Number(req.query.min_salary) : null;
+    const max_salary = req.query.max_salary ? Number(req.query.max_salary) : null;
+    const limit = req.query.limit ? Number(req.query.limit) : 1000;
+    const rows = await profiles.searchProfiles({ company, prefers, min_salary, max_salary, limit });
+    return res.status(200).json({ count: rows.length, rows });
+  } catch (e) {
+    console.error("admin search error:", e);
+    return res.sendStatus(500);
+  }
+});
+
+app.get("/admin/search.csv", async (req, res) => {
+  try {
+    if (!isAdmin(req)) return res.sendStatus(403);
+    if (!profiles?.searchProfiles) return res.status(500).json({ error: "profiles store not ready" });
+    const company = req.query.company || null;
+    const prefers = req.query.prefers || null;
+    const min_salary = req.query.min_salary ? Number(req.query.min_salary) : null;
+    const max_salary = req.query.max_salary ? Number(req.query.max_salary) : null;
+    const limit = req.query.limit ? Number(req.query.limit) : 1000;
+    const rows = await profiles.searchProfiles({ company, prefers, min_salary, max_salary, limit });
+    const csv = profilesToCsv(rows);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=\"profiles_search.csv\"");
+    return res.status(200).send(csv);
+  } catch (e) {
+    console.error("admin search.csv error:", e);
     return res.sendStatus(500);
   }
 });
@@ -290,7 +338,6 @@ async function onTextMessage({ waId, text }) {
       }
       if (captured.liabilities_aed) parts.push(`noted your liabilities as AED ${Number(captured.liabilities_aed).toLocaleString()}`);
       const ack = parts.length ? `Got it — ${parts.join("; ")}.` : null;
-
       if (ack) {
         if (reply === FALLBACK) reply = ack;
         else reply = `${reply}\n\n(${ack})`;
@@ -310,79 +357,6 @@ async function onTextMessage({ waId, text }) {
     console.error("onTextMessage fatal error:", e);
   }
 }
-
-// Admin: export all profiles CSV
-app.get("/admin/search", async (req, res) => {
-  try {
-    const secret = req.headers["x-admin-secret"];
-    const ok = (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
-    if (!ok) return res.sendStatus(403);
-    const company = req.query.company || null;
-    const prefers = req.query.prefers || null;
-    const min_salary = req.query.min_salary ? Number(req.query.min_salary) : null;
-    const max_salary = req.query.max_salary ? Number(req.query.max_salary) : null;
-    const limit = req.query.limit ? Number(req.query.limit) : 1000;
-    const rows = await Profiles.searchProfiles({ company, prefers, min_salary, max_salary, limit });
-    return res.status(200).json({ count: rows.length, rows });
-  } catch (e) {
-    console.error("admin search error:", e);
-    return res.sendStatus(500);
-  }
-});
-
-app.get("/admin/search.csv", async (req, res) => {
-  try {
-    const secret = req.headers["x-admin-secret"];
-    const ok = (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
-    if (!ok) return res.sendStatus(403);
-    const company = req.query.company || null;
-    const prefers = req.query.prefers || null;
-    const min_salary = req.query.min_salary ? Number(req.query.min_salary) : null;
-    const max_salary = req.query.max_salary ? Number(req.query.max_salary) : null;
-    const limit = req.query.limit ? Number(req.query.limit) : 1000;
-    const rows = await Profiles.searchProfiles({ company, prefers, min_salary, max_salary, limit });
-    const csv = profilesToCsv(rows);
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", "attachment; filename=\"profiles_search.csv\"");
-    return res.status(200).send(csv);
-  } catch (e) {
-    console.error("admin search.csv error:", e);
-    return res.sendStatus(500);
-  }
-});
-
-app.get("/admin/search", async (req, res) => {
-  try {
-    if (typeof isAdmin === "function" ? !isAdmin(req) : true) return res.sendStatus(403);
-    const company = req.query.company || null;
-    const prefers = req.query.prefers || null;
-    const min_salary = req.query.min_salary ? Number(req.query.min_salary) : null;
-    const max_salary = req.query.max_salary ? Number(req.query.max_salary) : null;
-    const limit = req.query.limit ? Number(req.query.limit) : 1000;
-    const rows = await Profiles.searchProfiles({ company, prefers, min_salary, max_salary, limit });
-    return res.status(200).json({ count: rows.length, rows });
-  } catch (e) {
-    return res.sendStatus(500);
-  }
-});
-
-app.get("/admin/search.csv", async (req, res) => {
-  try {
-    if (typeof isAdmin === "function" ? !isAdmin(req) : true) return res.sendStatus(403);
-    const company = req.query.company || null;
-    const prefers = req.query.prefers || null;
-    const min_salary = req.query.min_salary ? Number(req.query.min_salary) : null;
-    const max_salary = req.query.max_salary ? Number(req.query.max_salary) : null;
-    const limit = req.query.limit ? Number(req.query.limit) : 1000;
-    const rows = await Profiles.searchProfiles({ company, prefers, min_salary, max_salary, limit });
-    const csv = profilesToCsv(rows);
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", "attachment; filename=\"profiles_search.csv\"");
-    return res.status(200).send(csv);
-  } catch (e) {
-    return res.sendStatus(500);
-  }
-});
 
 registerWebhook({ app, verifyToken: VERIFY_TOKEN, onTextMessage });
 
