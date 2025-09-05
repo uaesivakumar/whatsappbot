@@ -127,6 +127,9 @@ const app = express();
 app.use(express.json({ limit: "2mb" }));
 
 app.use("/console", express.static(path.join(__dirname, "console/dist")));
+app.get("/console/*", (_, res) => { res.sendFile(path.join(__dirname, "console/dist/index.html")); });
+
+app.use("/console", express.static(path.join(__dirname, "console/dist")));
 app.get("/console/*", (_, res) => {
   res.sendFile(path.join(__dirname, "console/dist/index.html"));
 });
