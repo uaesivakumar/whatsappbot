@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "build": "npm --prefix console ci && npm --prefix console run build",
+    "postinstall": "npm --prefix console install && npm --prefix console run build"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.2",
