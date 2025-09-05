@@ -11,7 +11,10 @@ async function maybeInitSupabase() {
   const svc = process.env.SUPABASE_SERVICE_KEY;
   const anon = process.env.SUPABASE_ANON_KEY;
   const key = svc || anon;
-  if (!url || !key) return;
+  if (!url || !key) {
+    console.warn("⚠️ Supabase disabled (no URL or key). Falling back to in-memory.");
+    return;
+  }
 
   try {
     const { createClient } = await import('@supabase/supabase-js');
@@ -19,7 +22,7 @@ async function maybeInitSupabase() {
     mode = "supabase";
     console.log(`✅ Memory store: Supabase mode (${svc ? "service_role" : "anon"})`);
   } catch (e) {
-    console.warn("Supabase not available. Using in-memory store.");
+    console.warn("⚠️ Supabase client init failed. Using in-memory store.", e?.message);
   }
 }
 
