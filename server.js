@@ -17,14 +17,12 @@ const CRON_SECRET      = process.env.CRON_SECRET || "";
 const ADMIN_TOKEN      = process.env.ADMIN_TOKEN || "";
 const PORT             = process.env.PORT || 10000;
 
-// fetch shim for Node < 18
 let _fetch = globalThis.fetch;
 if (typeof _fetch !== "function") {
   const nf = await import("node-fetch");
   _fetch = nf.default;
 }
 
-// ===== Load intents.json (optional) =====
 const intentsPath = path.join(__dirname, "intents.json");
 let INTENTS = [];
 try {
@@ -39,7 +37,6 @@ try {
   INTENTS = [];
 }
 
-// ===== Modular imports (best-effort) =====
 let detectIntent, routeIntent;
 try {
   const intentsRouter = await import(path.join(__dirname, "src/intents/index.js"));
@@ -60,7 +57,6 @@ try {
   console.warn("ℹ️ /src/rag/index.js not found; RAG fallback disabled.");
 }
 
-// ===== Memory + profiles =====
 let store = null, summarizer = null;
 try {
   store = await import("./src/memory/store.js");
@@ -79,7 +75,6 @@ try {
   console.warn("ℹ️ Profiles store not found:", e?.message);
 }
 
-// ===== Short-term RAM context =====
 const MEMORY = new Map();
 function rememberShort(waId, role, text) {
   const arr = MEMORY.get(waId) || [];
@@ -91,7 +86,6 @@ function recentContext(waId) {
   return MEMORY.get(waId) || [];
 }
 
-// ===== Naive detect fallback =====
 function naiveDetect(text) {
   const t = (text || "").toLowerCase();
   let best = { name: "unknown", confidence: 0.0 };
@@ -109,7 +103,6 @@ function naiveDetect(text) {
   return best;
 }
 
-// ===== WA sender =====
 import { createSender } from "./src/wa/send.js";
 const { sendText } = createSender({
   accessToken: ACCESS_TOKEN,
@@ -117,7 +110,8 @@ const { sendText } = createSender({
   fetchImpl: _fetch
 });
 
-// ===== Brain =====
+const FALLBACK = "I didn’t fully catch that. Could you share a bit more or phrase it differently?";
+
 async function generateReply({ waId, text }) {
   let intentRes;
   try {
@@ -158,32 +152,9 @@ async function generateReply({ waId, text }) {
     }
   }
 
-  return "I didn’t fully catch that. Could you share a bit more or phrase it differently?";
+  return FALLBACK;
 }
 
-async function onTextMessage({ waId, text }) {
-  try {
-    if (store?.appendMessage) await store.appendMessage({ waId, role: "user", text });
-    rememberShort(waId, "user", text);
-    try { await onUserTextCapture(waId, text, profiles); } catch (e) { console.warn("capture error:", e?.message); }
-
-    const reply = await generateReply({ waId, text });
-
-    await sendText(waId, reply);
-    if (store?.appendMessage) await store.appendMessage({ waId, role: "bot", text: reply });
-    rememberShort(waId, "bot", reply);
-
-    if (summarizer?.shouldSummarize && summarizer?.buildAndSaveSummary) {
-      summarizer.shouldSummarize(waId)
-        .then(yes => yes ? summarizer.buildAndSaveSummary(waId) : null)
-        .catch(err => console.warn("summary error:", err?.message));
-    }
-  } catch (e) {
-    console.error("onTextMessage fatal error:", e);
-  }
-}
-
-// ===== Express + routes =====
 import { registerWebhook } from "./src/wa/webhook.js";
 import { toCsv } from "./src/admin/export.js";
 import { onUserTextCapture } from "./src/memory/capture.js";
@@ -194,7 +165,6 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/", (_, res) => res.send("OK"));
 app.get("/healthz", (_, res) => res.status(200).json({ ok: true, uptime: process.uptime() }));
 
-// Cron summarize (secured)
 app.post("/cron/summarize", async (req, res) => {
   try {
     const secret = req.headers["x-cron-secret"];
@@ -210,13 +180,11 @@ app.post("/cron/summarize", async (req, res) => {
   }
 });
 
-// Admin auth helper
 function isAdmin(req) {
   const secret = req.headers["x-admin-secret"];
   return (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
 }
 
-// Admin: latest summary
 app.get("/admin/summary", async (req, res) => {
   try {
     if (!isAdmin(req)) return res.sendStatus(403);
@@ -232,7 +200,6 @@ app.get("/admin/summary", async (req, res) => {
   }
 });
 
-// Admin: recent raw messages
 app.get("/admin/messages", async (req, res) => {
   try {
     if (!isAdmin(req)) return res.sendStatus(403);
@@ -248,7 +215,6 @@ app.get("/admin/messages", async (req, res) => {
   }
 });
 
-// Admin: export CSV
 app.get("/admin/export.csv", async (req, res) => {
   try {
     if (!isAdmin(req)) return res.sendStatus(403);
@@ -267,7 +233,6 @@ app.get("/admin/export.csv", async (req, res) => {
   }
 });
 
-// Admin: profiles (GET/POST)
 app.get("/admin/profile", async (req, res) => {
   try {
     if (!isAdmin(req)) return res.sendStatus(403);
@@ -297,6 +262,50 @@ app.post("/admin/profile", async (req, res) => {
     return res.sendStatus(500);
   }
 });
+
+async function onTextMessage({ waId, text }) {
+  try {
+    if (store?.appendMessage) await store.appendMessage({ waId, role: "user", text });
+    rememberShort(waId, "user", text);
+
+    let captured = null;
+    try {
+      captured = await (await import("./src/memory/capture.js")).onUserTextCapture(waId, text, profiles);
+    } catch (e) {
+      console.warn("capture error:", e?.message);
+    }
+
+    let reply = await generateReply({ waId, text });
+
+    if (captured && Object.keys(captured).length > 0) {
+      const parts = [];
+      if (captured.salary_aed) parts.push(`noted your salary as AED ${Number(captured.salary_aed).toLocaleString()}`);
+      if (captured.prefers) {
+        const prefMap = { cashback: "cashback", travel: "travel", no_fee: "no annual fee" };
+        parts.push(`noted your preference: ${prefMap[captured.prefers] || captured.prefers}`);
+      }
+      if (captured.liabilities_aed) parts.push(`noted your liabilities as AED ${Number(captured.liabilities_aed).toLocaleString()}`);
+      const ack = parts.length ? `Got it — ${parts.join("; ")}.` : null;
+
+      if (ack) {
+        if (reply === FALLBACK) reply = ack;
+        else reply = `${reply}\n\n(${ack})`;
+      }
+    }
+
+    await sendText(waId, reply);
+    if (store?.appendMessage) await store.appendMessage({ waId, role: "bot", text: reply });
+    rememberShort(waId, "bot", reply);
+
+    if (summarizer?.shouldSummarize && summarizer?.buildAndSaveSummary) {
+      summarizer.shouldSummarize(waId)
+        .then(yes => yes ? summarizer.buildAndSaveSummary(waId) : null)
+        .catch(err => console.warn("summary error:", err?.message));
+    }
+  } catch (e) {
+    console.error("onTextMessage fatal error:", e);
+  }
+}
 
 registerWebhook({ app, verifyToken: VERIFY_TOKEN, onTextMessage });
 
