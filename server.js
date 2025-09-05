@@ -116,7 +116,8 @@ async function generateReply({ waId, text }) {
 import { registerWebhook } from "./src/wa/webhook.js";
 import { toCsv } from "./src/admin/export.js";
 import { profilesToCsv } from "./src/admin/export_profiles.js";
-import * as RAG from "./src/rag/index.js";
+let RAG = null;
+try { RAG = await import("./src/rag/index.js"); } catch { RAG = {}; }
 import * as RAG from "./src/rag/index.js";
 import { onUserTextCapture } from "./src/memory/capture.js";
 
