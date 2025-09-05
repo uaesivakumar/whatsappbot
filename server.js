@@ -5,6 +5,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 dotenv.config();
+
+let RAG = {};
+try { RAG = await import("./src/rag/index.js"); } catch (e) { console.warn("RAG module unavailable:", e?.message || e); }
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -118,7 +121,6 @@ import { toCsv } from "./src/admin/export.js";
 import { profilesToCsv } from "./src/admin/export_profiles.js";
 let RAG = null;
 try { RAG = await import("./src/rag/index.js"); } catch { RAG = {}; }
-import * as RAG from "./src/rag/index.js";
 import { onUserTextCapture } from "./src/memory/capture.js";
 
 const app = express();
