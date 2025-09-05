@@ -1,4 +1,4 @@
-// server.js — ultra-thin: wires Express, WA webhook, intents, memory, and RAG + health/cron.
+// server.js — ultra-thin: Express, WA webhook, intents, memory, RAG + health/cron/admin.
 
 import express from "express";
 import dotenv from "dotenv";
@@ -14,6 +14,7 @@ const VERIFY_TOKEN     = process.env.META_VERIFY_TOKEN   || process.env.VERIFY_T
 const ACCESS_TOKEN     = process.env.META_ACCESS_TOKEN   || process.env.ACCESS_TOKEN;
 const PHONE_NUMBER_ID  = process.env.META_PHONE_NUMBER_ID|| process.env.PHONE_NUMBER_ID;
 const CRON_SECRET      = process.env.CRON_SECRET || "";
+const ADMIN_TOKEN      = process.env.ADMIN_TOKEN || "";
 const PORT             = process.env.PORT || 10000;
 
 let _fetch = globalThis.fetch;
@@ -69,7 +70,7 @@ try {
   console.warn("ℹ️ Memory layer not initialized:", e?.message);
 }
 
-// Short-term in-memory context (for quick window)
+// Short-term in-memory context
 const MEMORY = new Map();
 function rememberShort(waId, role, text) {
   const arr = MEMORY.get(waId) || [];
@@ -99,7 +100,7 @@ function naiveDetect(text) {
   return best;
 }
 
-// Create WA sender
+// WA sender
 import { createSender } from "./src/wa/send.js";
 const { sendText } = createSender({
   accessToken: ACCESS_TOKEN,
@@ -151,7 +152,7 @@ async function generateReply({ waId, text }) {
   return "I didn’t fully catch that. Could you share a bit more or phrase it differently?";
 }
 
-// Message handler used by webhook
+// on-text pipeline
 async function onTextMessage({ waId, text }) {
   try {
     if (store?.appendMessage) await store.appendMessage({ waId, role: "user", text });
@@ -173,7 +174,7 @@ async function onTextMessage({ waId, text }) {
   }
 }
 
-// Express + webhook
+// Express + webhook/routes
 import { registerWebhook } from "./src/wa/webhook.js";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -181,14 +182,13 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/", (_, res) => res.send("OK"));
 app.get("/healthz", (_, res) => res.status(200).json({ ok: true, uptime: process.uptime() }));
 
-// Secure cron endpoint for summaries (use Render Cron with header: x-cron-secret)
+// Secure cron endpoint for summaries
 app.post("/cron/summarize", async (req, res) => {
   try {
     const secret = req.headers["x-cron-secret"];
     if (!CRON_SECRET || secret !== CRON_SECRET) return res.sendStatus(403);
     const waId = req.query.waId || req.body?.waId;
     if (!waId) return res.status(400).json({ error: "waId required" });
-
     if (!summarizer?.buildAndSaveSummary) return res.status(500).json({ error: "summarizer not ready" });
     const summary = await summarizer.buildAndSaveSummary(waId);
     return res.status(200).json({ waId, summarized: !!summary });
@@ -198,11 +198,28 @@ app.post("/cron/summarize", async (req, res) => {
   }
 });
 
-registerWebhook({
-  app,
-  verifyToken: VERIFY_TOKEN,
-  onTextMessage
+// Admin summary endpoint (header: x-admin-secret; uses ADMIN_TOKEN or CRON_SECRET)
+app.get("/admin/summary", async (req, res) => {
+  try {
+    const secret = req.headers["x-admin-secret"];
+    const valid = (ADMIN_TOKEN && secret === ADMIN_TOKEN) || (!ADMIN_TOKEN && CRON_SECRET && secret === CRON_SECRET);
+    if (!valid) return res.sendStatus(403);
+
+    const waId = req.query.waId;
+    if (!waId) return res.status(400).json({ error: "waId required" });
+
+    if (!store?.getLatestSummary) return res.status(500).json({ error: "summary store not ready" });
+    const latest = await store.getLatestSummary(waId);
+    if (!latest) return res.status(404).json({ waId, summary: null, updated_at: null });
+
+    return res.status(200).json({ waId, summary: latest.summary, updated_at: latest.updated_at });
+  } catch (e) {
+    console.error("admin summary error:", e);
+    return res.sendStatus(500);
+  }
 });
+
+registerWebhook({ app, verifyToken: VERIFY_TOKEN, onTextMessage });
 
 app.listen(PORT, () => {
   console.log(`✅ Bot server running on port ${PORT}`);
