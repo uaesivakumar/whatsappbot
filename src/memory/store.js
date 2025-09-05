@@ -8,13 +8,16 @@ const memory = {
 
 async function maybeInitSupabase() {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_ANON_KEY;
+  const svc = process.env.SUPABASE_SERVICE_KEY;
+  const anon = process.env.SUPABASE_ANON_KEY;
+  const key = svc || anon;
   if (!url || !key) return;
+
   try {
     const { createClient } = await import('@supabase/supabase-js');
     supabase = createClient(url, key);
     mode = "supabase";
-    console.log("✅ Memory store: Supabase mode");
+    console.log(`✅ Memory store: Supabase mode (${svc ? "service_role" : "anon"})`);
   } catch (e) {
     console.warn("Supabase not available. Using in-memory store.");
   }
@@ -37,7 +40,8 @@ export async function appendMessage({ waId, role, text, ts = Date.now() }) {
 
 export async function fetchRecentMessages({ waId, limit = 500 }) {
   if (mode === "supabase" && supabase) {
-    const { data, error } = await supabase.from('messages')
+    const { data, error } = await supabase
+      .from('messages')
       .select('role,text,ts')
       .eq('wa_id', waId)
       .order('ts', { ascending: false })
@@ -54,7 +58,8 @@ export async function fetchRecentMessages({ waId, limit = 500 }) {
 
 export async function getLatestSummary(waId) {
   if (mode === "supabase" && supabase) {
-    const { data, error } = await supabase.from('memory_summaries')
+    const { data, error } = await supabase
+      .from('memory_summaries')
       .select('summary, updated_at')
       .eq('wa_id', waId)
       .order('updated_at', { ascending: false })
@@ -72,7 +77,9 @@ export async function getLatestSummary(waId) {
 export async function upsertSummary(waId, summary) {
   const payload = { wa_id: waId, summary, updated_at: new Date().toISOString() };
   if (mode === "supabase" && supabase) {
-    const { error } = await supabase.from('memory_summaries').upsert([payload], { onConflict: 'wa_id' });
+    const { error } = await supabase
+      .from('memory_summaries')
+      .upsert([payload], { onConflict: 'wa_id' });
     if (error) console.warn("Supabase upsert error:", error.message);
     return;
   }
