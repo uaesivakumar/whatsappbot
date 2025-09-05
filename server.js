@@ -335,3 +335,4 @@ async function fetchStats24h() {
 // Start
 // =====================
 app.listen(PORT, () => log(`Server listening on ${PORT}`));
+// stop
