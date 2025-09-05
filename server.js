@@ -1,10 +1,8 @@
-import express from "express";
-import path from "path";
-import { fileURLToPath } from "url";
+import express from "express";import { fileURLToPath } from "url";
 import dotenv from "dotenv";
-import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";import { fileURLToPath } from "url";
 
 let _fetch = globalThis.fetch;
 if (typeof _fetch !== "function") {
@@ -12,9 +10,7 @@ if (typeof _fetch !== "function") {
   _fetch = nf.default;
 }
 
-dotenv.config();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+dotenv.config();const __dirname = path.dirname(__filename);
 
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || process.env.VERIFY_TOKEN;
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || process.env.ACCESS_TOKEN;
