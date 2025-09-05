@@ -165,6 +165,7 @@ async function onTextMessage({ waId, text }) {
   try {
     if (store?.appendMessage) await store.appendMessage({ waId, role: "user", text });
     rememberShort(waId, "user", text);
+    try { await onUserTextCapture(waId, text, profiles); } catch (e) { console.warn("capture error:", e?.message); }
 
     const reply = await generateReply({ waId, text });
 
@@ -185,6 +186,7 @@ async function onTextMessage({ waId, text }) {
 // ===== Express + routes =====
 import { registerWebhook } from "./src/wa/webhook.js";
 import { toCsv } from "./src/admin/export.js";
+import { onUserTextCapture } from "./src/memory/capture.js";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
