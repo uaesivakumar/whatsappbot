@@ -1,22 +1,19 @@
-export default function Table({ cols, rows }) {
+import React from "react";
+export default function Table({ columns, rows, empty = "No data" }) {
   return (
-    <div className="overflow-auto rounded-2xl border border-neutral-800">
-      <table className="min-w-full text-sm">
-        <thead className="bg-neutral-900/60">
-          <tr>
-            {cols.map((c) => (
-              <th key={c.key} className="text-left px-4 py-2 font-semibold text-neutral-300">{c.label}</th>
-            ))}
-          </tr>
+    <div className="card overflow-hidden">
+      <table className="table">
+        <thead>
+          <tr>{columns.map(c => <th key={c.key || c.label}>{c.label}</th>)}</tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} className="odd:bg-neutral-950 even:bg-neutral-900/30">
-              {cols.map((c) => (
-                <td key={c.key} className="px-4 py-2 text-neutral-200">{c.render ? c.render(r) : r[c.key]}</td>
-              ))}
+          {rows.length ? rows.map((r,i)=>(
+            <tr key={i}>
+              {columns.map(c => <td key={c.key || c.label}>{typeof c.render==="function" ? c.render(r) : r[c.key]}</td>)}
             </tr>
-          ))}
+          )) : (
+            <tr><td className="text-gray-500 p-6" colSpan={columns.length}>{empty}</td></tr>
+          )}
         </tbody>
       </table>
     </div>

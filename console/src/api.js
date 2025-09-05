@@ -1,54 +1,42 @@
-const BASE = "";
-
-function headers() {
+const base = "";
+const hdrs = () => {
   const token = localStorage.getItem("ADMIN_TOKEN") || "";
   return { "x-admin-secret": token, "Content-Type": "application/json" };
-}
-
+};
 export async function health() {
-  const r = await fetch(`${BASE}/healthz`);
+  const r = await fetch(`${base}/healthz`);
   return r.json();
 }
-
 export async function kbCount() {
-  const r = await fetch(`${BASE}/admin/kb/count`, { headers: headers() });
-  if (!r.ok) throw new Error("kb count");
+  const r = await fetch(`${base}/admin/kb/count`, { headers: hdrs() });
   return r.json();
 }
-
 export async function kbList(limit = 10) {
-  const r = await fetch(`${BASE}/admin/kb/list?limit=${limit}`, { headers: headers() });
-  if (!r.ok) throw new Error("kb list");
+  const r = await fetch(`${base}/admin/kb/list?limit=${limit}`, { headers: hdrs() });
   return r.json();
 }
-
 export async function kbAdd(content, meta = {}) {
-  const r = await fetch(`${BASE}/admin/kb`, { method: "POST", headers: headers(), body: JSON.stringify({ content, meta }) });
-  if (!r.ok) throw new Error("kb add");
+  const r = await fetch(`${base}/admin/kb`, { method: "POST", headers: hdrs(), body: JSON.stringify({ content, meta }) });
   return r.json();
 }
-
-export async function kbReindex() {
-  const r = await fetch(`${BASE}/admin/reindex`, { method: "POST", headers: headers() });
-  if (!r.ok) throw new Error("reindex");
+export async function reindex() {
+  const r = await fetch(`${base}/admin/reindex`, { method: "POST", headers: hdrs() });
   return r.json();
 }
-
 export async function messages(waId, limit = 50) {
-  const r = await fetch(`${BASE}/admin/messages?waId=${encodeURIComponent(waId)}&limit=${limit}`, { headers: headers() });
-  if (!r.ok) throw new Error("messages");
+  const r = await fetch(`${base}/admin/messages?waId=${encodeURIComponent(waId)}&limit=${limit}`, { headers: hdrs() });
   return r.json();
 }
-
-export async function summary(waId) {
-  const r = await fetch(`${BASE}/admin/summary?waId=${encodeURIComponent(waId)}`, { headers: headers() });
-  if (!r.ok) throw new Error("summary");
+export async function profileGet(waId) {
+  const r = await fetch(`${base}/admin/profile?waId=${encodeURIComponent(waId)}`, { headers: hdrs() });
   return r.json();
 }
-
-export async function searchProfiles(params) {
-  const q = new URLSearchParams(params).toString();
-  const r = await fetch(`${BASE}/admin/search?${q}`, { headers: headers() });
-  if (!r.ok) throw new Error("search");
+export async function profileUpsert(data) {
+  const r = await fetch(`${base}/admin/profile`, { method: "POST", headers: hdrs(), body: JSON.stringify(data) });
+  return r.json();
+}
+export async function profilesSearch(qs = {}) {
+  const q = new URLSearchParams(qs).toString();
+  const r = await fetch(`${base}/admin/search?${q}`, { headers: hdrs() });
   return r.json();
 }

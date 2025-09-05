@@ -1,52 +1,71 @@
-import { useEffect, useState } from "react";
-import { health, kbCount, kbList, kbReindex, kbAdd } from "../api";
+import React from "react";
+import { health, kbCount, kbList, kbAdd, reindex } from "../api";
 import StatCard from "../components/StatCard";
 import Table from "../components/Table";
-
+import { Server, BookOpen, RefreshCw } from "lucide-react";
 export default function Dashboard() {
-  const [hz, setHz] = useState(null);
-  const [count, setCount] = useState(0);
-  const [rows, setRows] = useState([]);
-  const [adding, setAdding] = useState(false);
-  const [snippet, setSnippet] = useState("");
-
-  async function refresh() {
-    const c = await kbCount();
-    setCount(c.count);
-    const l = await kbList(5);
-    setRows(l.rows || []);
+  const [h,setH]=React.useState(null);
+  const [count,setCount]=React.useState(0);
+  const [items,setItems]=React.useState([]);
+  const [txt,setTxt]=React.useState("");
+  const loading = React.useRef(false);
+  React.useEffect(()=>{(async()=>{
+    setH(await health());
+    const c=await kbCount(); setCount(c.count||0);
+    const l=await kbList(10); setItems(l.rows||[]);
+  })()},[]);
+  async function doAdd(){
+    if(!txt.trim()) return;
+    loading.current=true;
+    await kbAdd(txt,{src:"console"});
+    setTxt("");
+    const c=await kbCount(); setCount(c.count||0);
+    const l=await kbList(10); setItems(l.rows||[]);
+    loading.current=false;
   }
-
-  useEffect(() => {
-    health().then(setHz);
-    refresh();
-  }, []);
-
+  async function doReindex(){
+    loading.current=true;
+    await reindex();
+    loading.current=false;
+  }
   return (
     <div className="space-y-6">
-      <div className="grid sm:grid-cols-3 gap-4">
-        <StatCard label="Service" value={hz?.ok ? "Healthy" : "Unknown"} right={<span className="text-xs text-neutral-400">uptime {hz?.uptime?.toFixed?.(0)}s</span>} />
-        <StatCard label="KB Chunks" value={count} />
-        <div className="flex items-stretch gap-3">
-          <button onClick={async () => { await kbReindex(); refresh(); }} className="flex-1 rounded-2xl border border-neutral-800 bg-neutral-900/60 hover:bg-neutral-900 px-4 py-3 font-medium">Reindex KB</button>
-          <button onClick={() => setAdding(true)} className="flex-1 rounded-2xl bg-indigo-600 hover:bg-indigo-500 px-4 py-3 font-medium">Add Snippet</button>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Overview</h1>
+      </div>
+      <div className="grid md:grid-cols-3 gap-4">
+        <StatCard title="Service" value={h?.ok ? "Healthy" : "Down"} foot={`uptime ${Math.floor(h?.uptime||0)}s`} icon={<Server size={20}/>}/>
+        <StatCard title="KB Chunks" value={count} icon={<BookOpen size={20}/>}/>
+        <StatCard title="Actions" value={<span className="badge">Admin</span>} icon={<RefreshCw size={20}/>}/>
+      </div>
+      <div className="grid lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-4">
+          <div className="flex gap-2">
+            <button onClick={doReindex} className="btn">Reindex KB</button>
+            <input className="flex-1" placeholder="Add a KB snippet…" value={txt} onChange={(e)=>setTxt(e.target.value)} />
+            <button onClick={doAdd} className="btn-primary">Add Snippet</button>
+          </div>
+          <Table
+            columns={[
+              { label:"ID", render:(r)=> <span className="text-xs text-gray-400">{r.id?.slice(0,8)}</span> },
+              { label:"Source", render:(r)=> <span className="badge">{r.meta?.src||"—"}</span> },
+              { label:"Updated", render:(r)=> new Date(r.updated_at).toLocaleString() },
+            ]}
+            rows={items}
+            empty="No KB items"
+          />
         </div>
-      </div>
-
-      <div>
-        <div className="mb-2 text-sm text-neutral-400">Latest KB items</div>
-        <Table cols={[{ key: "id", label: "ID", render: (r) => <code className="text-xs">{r.id.slice(0, 8)}…</code> }, { key: "meta", label: "Source", render: (r) => r.meta?.src || "—" }, { key: "updated_at", label: "Updated" }]} rows={rows} />
-      </div>
-
-      {adding && (
-        <div className="rounded-2xl border border-neutral-800 p-4 bg-neutral-900/60 space-y-3">
-          <textarea value={snippet} onChange={(e)=>setSnippet(e.target.value)} placeholder="Paste Q/A or doc snippet…" className="w-full h-32 rounded-xl bg-neutral-800 border border-neutral-700 p-3 outline-none focus:ring-2 focus:ring-indigo-500" />
-          <div className="flex gap-2 justify-end">
-            <button onClick={()=>setAdding(false)} className="rounded-xl border border-neutral-700 px-3 py-2">Cancel</button>
-            <button onClick={async ()=>{ if(!snippet.trim()) return; await kbAdd(snippet.trim(), {src:"console"}); setSnippet(""); setAdding(false); refresh(); }} className="rounded-xl bg-indigo-600 hover:bg-indigo-500 px-3 py-2 font-medium">Save</button>
+        <div className="space-y-4">
+          <div className="card p-4">
+            <div className="text-sm text-gray-400 mb-2">Quick Tips</div>
+            <ul className="space-y-2 text-sm text-gray-300">
+              <li>Use the Knowledge tab to manage larger content.</li>
+              <li>Profiles tab stores user preferences for replies.</li>
+              <li>Messages tab lets you audit WhatsApp logs.</li>
+            </ul>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

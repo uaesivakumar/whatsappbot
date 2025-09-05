@@ -1,6 +1,22 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-:root { color-scheme: dark; }
-html, body, #root { height: 100%; }
+:root{
+  --bg:#0b0f17;
+  --panel:#111827;
+  --muted:#9CA3AF;
+  --ring:#2563EB;
+}
+html,body,#root{height:100%}
+body{background:var(--bg);color:white}
+input,select,textarea{background-color:#111827;color:white;border:1px solid #1F2937;border-radius:.6rem;padding:.6rem .8rem}
+button{border-radius:.8rem;padding:.7rem 1rem}
+.card{background:var(--panel);border:1px solid #1F2937;border-radius:1rem}
+.btn{background:#1F2937}
+.btn:hover{background:#374151}
+.btn-primary{background:#2563EB}
+.btn-primary:hover{background:#1D4ED8}
+.link{color:#93C5FD}
+.table{width:100%;border-collapse:separate;border-spacing:0}
+.table th,.table td{padding:.9rem 1rem;border-bottom:1px solid #111827}
+.table th{color:#9CA3AF;font-weight:600;text-align:left}
+.badge{font-size:.75rem;padding:.25rem .5rem;border-radius:.5rem;background:#111827;border:1px solid #1F2937;color:#e5e7eb}

@@ -1,29 +1,44 @@
-import { useState, useEffect } from "react";
-import { kbList, kbAdd, kbReindex } from "../api";
+import React from "react";
+import { kbList, kbAdd, kbCount, reindex } from "../api";
 import Table from "../components/Table";
-
-export default function KB() {
-  const [rows, setRows] = useState([]);
-  const [snippet, setSnippet] = useState("");
-
-  async function load() {
-    const r = await kbList(20);
-    setRows(r.rows || []);
+export default function KB(){
+  const [items,setItems]=React.useState([]);
+  const [count,setCount]=React.useState(0);
+  const [txt,setTxt]=React.useState("");
+  React.useEffect(()=>{(async()=>{
+    const c=await kbCount(); setCount(c.count||0);
+    const l=await kbList(50); setItems(l.rows||[]);
+  })()},[]);
+  async function add(){
+    if(!txt.trim()) return;
+    await kbAdd(txt,{src:"console"});
+    setTxt("");
+    const c=await kbCount(); setCount(c.count||0);
+    const l=await kbList(50); setItems(l.rows||[]);
   }
-
-  useEffect(()=>{ load(); }, []);
-
+  async function reidx(){
+    await reindex();
+  }
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-neutral-800 p-4 bg-neutral-900/60 space-y-3">
-        <textarea className="w-full h-28 rounded-xl bg-neutral-800 border border-neutral-700 p-3 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Add KB snippet…" value={snippet} onChange={(e)=>setSnippet(e.target.value)} />
-        <div className="flex gap-2 justify-end">
-          <button onClick={()=>setSnippet("")} className="rounded-xl border border-neutral-700 px-3 py-2">Clear</button>
-          <button onClick={async()=>{ if(!snippet.trim()) return; await kbAdd(snippet.trim(), {src:"console"}); setSnippet(""); load(); }} className="rounded-xl bg-indigo-600 hover:bg-indigo-500 px-3 py-2 font-medium">Add</button>
-          <button onClick={async()=>{ await kbReindex(); load(); }} className="rounded-xl border border-indigo-600 text-indigo-300 px-3 py-2">Reindex</button>
+      <h1 className="text-2xl font-semibold">Knowledge</h1>
+      <div className="grid md:grid-cols-3 gap-3">
+        <div className="card p-4 md:col-span-2 flex gap-2">
+          <input className="flex-1" placeholder="Snippet text" value={txt} onChange={(e)=>setTxt(e.target.value)}/>
+          <button className="btn-primary" onClick={add}>Add</button>
         </div>
+        <button className="btn card p-4" onClick={reidx}>Reindex</button>
       </div>
-      <Table cols={[{ key: "id", label: "ID", render:(r)=><code className="text-xs">{r.id.slice(0,8)}…</code> }, { key: "meta", label: "Source", render:(r)=>r.meta?.src || "—" }, { key: "updated_at", label: "Updated" }]} rows={rows} />
+      <div className="text-sm text-gray-400">Total {count}</div>
+      <Table
+        columns={[
+          {label:"ID", render:(r)=> <span className="text-xs text-gray-400">{r.id?.slice(0,10)}</span>},
+          {label:"Source", render:(r)=> <span className="badge">{r.meta?.src||"—"}</span>},
+          {label:"Updated", render:(r)=> new Date(r.updated_at).toLocaleString()}
+        ]}
+        rows={items}
+        empty="No snippets"
+      />
     </div>
   );
 }
