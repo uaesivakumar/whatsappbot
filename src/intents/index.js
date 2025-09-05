@@ -1,28 +1,45 @@
-import { detectIntent } from "./classifier.js";
+// Lightweight classifier + router that passes profile to handlers
+
 import * as loans from "./loans.js";
 import * as cards from "./cards.js";
 import * as accounts from "./accounts.js";
 import * as general from "./general.js";
 import * as home_loan from "./home_loan.js";
 
-export { detectIntent };
+let profiles;
+try { profiles = await import("../memory/profiles.js"); } catch {}
 
-export async function routeIntent(intentName, text, ctx = {}) {
-  const map = {
-    loans: loans.handle,
-    cards: cards.handle,
-    accounts: accounts.handle,
-    general: general.handle,
-    home_loan: home_loan.handle,
-  };
+const map = { loans, cards, accounts, general, home_loan };
 
-  const fn = map[intentName];
-  if (typeof fn === "function") {
-    return await fn(text, ctx);
+export async function detectIntent(text, INTENTS, { context } = {}) {
+  const t = (text || "").toLowerCase();
+  let best = { name: "general", confidence: 0.5 };
+  for (const it of INTENTS || []) {
+    const name = it.name || it.intent;
+    const pats = it.examples || it.utterances || [];
+    if (!name || !pats?.length) continue;
+    for (const p of pats) {
+      if (t.includes(String(p).toLowerCase())) {
+        best = { name, confidence: it.base_confidence ?? 0.8 };
+        break;
+      }
+    }
+    if (best.name !== "general" && best.confidence >= 0.7) break;
   }
-  if (typeof general.handle === "function") {
-    return await general.handle(text, ctx);
-  }
-  return null;
+  return best;
 }
+
+export async function routeIntent(name, text, { intents, memory, waId } = {}) {
+  const mod = map[name] || map.general;
+  let profile = null;
+  try {
+    profile = profiles?.getProfile ? await profiles.getProfile(waId) : null;
+  } catch { /* non-fatal */ }
+
+  if (typeof mod.handle === "function") {
+    return await mod.handle(text, { waId, memory, profile });
+  }
+  return "How can I help you today?";
+}
+
 export default { detectIntent, routeIntent };
