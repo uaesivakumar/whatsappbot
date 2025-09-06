@@ -10,6 +10,14 @@ const CRON_SECRET = process.env.CRON_SECRET || "";
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+
+try { (await import("dotenv")).default.config(); } catch {}
+
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+const CRON_SECRET = process.env.CRON_SECRET || "";
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const okAdmin = (req) => req.headers["x-admin-secret"] === ADMIN_TOKEN;
 const okCron = (req) => req.headers["x-cron-secret"] === CRON_SECRET;
 
@@ -553,8 +561,6 @@ app.post("/admin/ops/run", async (req,res)=>{
 // console static stays protected by basic auth from earlier
 
 // admin helpers
-
-const bad = (res) => res.status(401).json({ ok: false });
 
 function toISO(x){ if(!x) return null; const d = new Date(x); return isNaN(d) ? null : d.toISOString(); }
 function toCSV(rows, headers){
