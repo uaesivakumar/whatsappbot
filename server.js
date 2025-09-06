@@ -1,180 +1,136 @@
+// server.js
 import express from "express";
-import crypto from "crypto";
-import pg from "pg";
-import { fileURLToPath } from "url";
-import path from "path";
+import { Pool } from "pg";
+import crypto from "node:crypto";
+import dns from "node:dns";
 
-const { Pool } = pg;
+dns.setDefaultResultOrder("ipv4first");
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 10000;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const DATABASE_URL = process.env.DATABASE_URL || "";
 
-const pool = DATABASE_URL
-  ? new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } })
-  : null;
-
-const app = express();
-app.disable("x-powered-by");
-app.use(express.json({ limit: "1mb" }));
-
-// --- tiny logger to see health pings ---
-app.use((req, _res, next) => {
-  if (req.path === "/" || req.path.startsWith("/health") || req.path === "/__diag") {
-    console.log(`[probe] ${req.method} ${req.path}`);
-  }
-  next();
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
 });
 
-function stableStringify(value) {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
-  const keys = Object.keys(value).sort();
-  const entries = keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k]));
-  return "{" + entries.join(",") + "}";
+function hashContent(s) {
+  return crypto.createHash("sha256").update(String(s || "")).digest("hex");
 }
 
-function normalizeMeta(meta) {
-  if (meta === null || meta === undefined) return {};
-  if (typeof meta === "string") {
-    try {
-      const parsed = JSON.parse(meta);
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch {
-      return { value: meta };
-    }
-  }
-  if (typeof meta !== "object") return { value: meta };
-  return meta;
+async function ensureSchema() {
+  await pool.query(`
+    create table if not exists kb (
+      id text primary key,
+      content text not null,
+      meta jsonb default '{}'::jsonb,
+      content_hash text not null unique,
+      created_at timestamptz default now()
+    );
+    create index if not exists kb_created_at_idx on kb(created_at desc);
+  `);
 }
 
-function computeHash(content, metaObj) {
-  const normalizedMeta = stableStringify(metaObj);
-  const data = `${content}\n---\n${normalizedMeta}`;
-  return crypto.createHash("sha256").update(data).digest("hex");
-}
+const app = express();
+app.use(express.json({ limit: "1mb" }));
 
 function adminAuth(req, res, next) {
-  const auth = req.headers.authorization || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) {
+  const auth = req.get("authorization") || "";
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  if (!m || m[1] !== ADMIN_TOKEN) {
     return res.status(401).json({ error: "unauthorized" });
   }
   next();
 }
 
-// Health: support "/" and "/health" for Render probes
 app.get("/", (_req, res) => {
-  res.status(200).send("ok");
-});
-app.head("/", (_req, res) => {
-  res.status(200).end();
+  res.type("text/plain").send("OK");
 });
 
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
-    uptime_sec: Math.floor(process.uptime()),
+    uptime_sec: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
     service: "kb-backend",
-    node: process.version,
+    node: process.version
   });
 });
-app.head("/health", (_req, res) => res.status(200).end());
 
 app.get("/__diag", async (_req, res) => {
   try {
-    if (!pool) return res.json({ ok: true, db_ok: false, note: "no DATABASE_URL" });
-    const r = await pool.query("select 1 as ok");
+    await pool.query("select 1");
     res.json({
       ok: true,
-      db_ok: r?.rows?.[0]?.ok === 1,
-      timestamp: new Date().toISOString(),
+      db_ok: true,
+      node: process.version,
+      timestamp: new Date().toISOString()
     });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    res.json({
+      ok: false,
+      error: String(e && e.message ? e.message : e)
+    });
   }
 });
 
 app.get("/admin/kb/count", adminAuth, async (_req, res) => {
   try {
-    const r = await pool.query(`select count(*)::int as count from kb_chunks`);
-    res.json({ count: r.rows[0].count });
+    const { rows } = await pool.query("select count(*)::int as n from kb");
+    res.json({ ok: true, count: rows[0].n });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: String(e.message || e) });
   }
 });
 
 app.get("/admin/kb/list", adminAuth, async (req, res) => {
-  const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), 200);
-  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+  const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 50));
   try {
-    const r = await pool.query(
-      `select id, content, meta, content_hash, updated_at
-       from kb_chunks
-       order by updated_at desc
-       limit $1 offset $2`,
-      [limit, offset]
+    const { rows } = await pool.query(
+      "select id, content, meta, content_hash, created_at from kb order by created_at desc limit $1",
+      [limit]
     );
-    res.json({ items: r.rows, limit, offset });
+    res.json({ ok: true, items: rows });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: String(e.message || e) });
   }
 });
 
 app.post("/admin/kb", adminAuth, async (req, res) => {
+  const content = (req.body && req.body.content) || "";
+  const meta = (req.body && req.body.meta) || {};
+  if (!content || typeof content !== "string") {
+    return res.status(400).json({ error: "invalid content" });
+  }
+  const h = hashContent(content.trim());
+  const id = h;
   try {
-    const content = typeof req.body?.content === "string" ? req.body.content.trim() : "";
-    const metaObj = normalizeMeta(req.body?.meta);
-    if (!content) return res.status(400).json({ error: "content required" });
-
-    const content_hash = computeHash(content, metaObj);
-
-    const client = await pool.connect();
-    try {
-      const pre = await client.query(
-        `select id from kb_chunks where content_hash = $1`,
-        [content_hash]
-      );
-      if (pre.rowCount > 0) {
-        return res.json({ id: pre.rows[0].id, content_hash, deduped: true });
-      }
-
-      try {
-        const ins = await client.query(
-          `insert into kb_chunks (content, meta, content_hash)
-           values ($1, $2, $3)
-           returning id`,
-          [content, metaObj, content_hash]
-        );
-        return res.json({ id: ins.rows[0].id, content_hash, deduped: false });
-      } catch (e) {
-        if (e.code === "23505") {
-          const again = await client.query(
-            `select id from kb_chunks where content_hash = $1`,
-            [content_hash]
-          );
-          if (again.rowCount > 0) {
-            return res.json({ id: again.rows[0].id, content_hash, deduped: true });
-          }
-        }
-        throw e;
-      }
-    } finally {
-      client.release();
-    }
+    const { rows } = await pool.query(
+      `
+      insert into kb (id, content, meta, content_hash)
+      values ($1, $2, $3::jsonb, $1)
+      on conflict (content_hash) do update
+      set content = excluded.content,
+          meta = excluded.meta
+      returning id, content_hash, created_at
+      `,
+      [id, content, meta]
+    );
+    res.json({ ok: true, id: rows[0].id, hash: rows[0].content_hash });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: String(e.message || e) });
   }
 });
 
-app.use((_req, res) => {
-  res.status(404).json({ error: "not_found" });
-});
+async function main() {
+  await ensureSchema();
+  app.listen(PORT, () => {
+    console.log(`server listening on ${PORT} (${process.cwd()})`);
+  });
+}
 
-app.listen(PORT, () => {
-  console.log(`server listening on ${PORT} (${__dirname})`);
+main().catch((e) => {
+  console.error("fatal:", e);
+  process.exit(1);
 });
