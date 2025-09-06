@@ -1,12 +1,14 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
+import fs from "fs";
+import crypto from "crypto";
 
+// --- env
 try { (await import("dotenv")).default.config(); } catch {}
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// --- env
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
@@ -22,11 +24,11 @@ const ADMIN_PASS = process.env.ADMIN_PASS || "";
 let _fetch = globalThis.fetch;
 if (typeof _fetch !== "function") { const nf = await import("node-fetch"); _fetch = nf.default; }
 
-// fs + dynamic imports
-import fs from "fs";
+// dynamic imports helper
 function fileExists(p){ try { return fs.existsSync(p); } catch { return false; } }
 async function tryImport(p){ try{ if(!fileExists(p)) return null; const u = pathToFileURL(p).href; return await import(u); } catch { return null; } }
 
+// intents bootstrap (optional)
 const intentsPath = path.join(__dirname, "intents.json");
 let INTENTS = [];
 try {
@@ -40,9 +42,10 @@ try {
 const intentsMod    = await tryImport(path.join(__dirname, "src/intents/index.js"));
 const ragMod        = await tryImport(path.join(__dirname, "src/rag/index.js"));
 const storeMod      = await tryImport(path.join(__dirname, "src/memory/store.js"));
-const summarizerMod = await tryImport(path.join(__dirname, "src/memory/summarizer.js"));
+await tryImport(path.join(__dirname, "src/memory/summarizer.js")); // lazy used
 const profilesMod   = await tryImport(path.join(__dirname, "src/memory/profiles.js"));
 
+// memory (short context)
 const MEMORY = new Map();
 function remember(waId, role, text){
   const arr = MEMORY.get(waId) || [];
@@ -52,6 +55,7 @@ function remember(waId, role, text){
 }
 function recentContext(waId){ return MEMORY.get(waId) || []; }
 
+// naive intent
 function naiveDetect(text){
   const t = String(text||"").toLowerCase();
   let best = { name: "unknown", confidence: 0 };
@@ -109,6 +113,21 @@ async function sp(){
   return _sp;
 }
 
+// small helpers for KB hashing (used only for fallback lookups)
+const normalizeForHash = (t) => String(t || "").toLowerCase().trim().replace(/\s+/g, " ");
+const md5 = (s) => crypto.createHash("md5").update(s).digest("hex");
+
+// chunker
+function splitKBText(t, CHUNK = 800) {
+  const parts = String(t || "").split(/\n{2,}/).map(x => x.trim()).filter(Boolean);
+  const out = [];
+  for (const p of parts) {
+    if (p.length <= CHUNK) { out.push(p); continue; }
+    for (let i = 0; i < p.length; i += CHUNK) out.push(p.slice(i, i + CHUNK));
+  }
+  return out.length ? out : [String(t || "").slice(0, CHUNK)];
+}
+
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
@@ -154,7 +173,7 @@ app.post("/webhook", async (req, res) => {
     res.sendStatus(200);
     const entries = req.body?.entry || [];
     for (const entry of entries) {
-      const changes = entry?.changes || [];
+      const changes = entry?.value?.changes || entry?.changes || [];
       for (const change of changes) {
         const messages = change?.value?.messages || [];
         for (const msg of messages) {
@@ -267,86 +286,98 @@ app.get("/admin/search.csv", adminGuard, async (req,res)=>{
   }catch{ return res.status(500).send("error"); }
 });
 
-// ---------- admin: KB (single authoritative set) ----------
+// ---------- admin: KB (UPSERT with onConflict content_hash) ----------
 
-// split helper for direct insert fallback
-function splitKBText(t, CHUNK=800){
-  const parts = String(t || "").split(/\n{2,}/).map(x => x.trim()).filter(Boolean);
-  const out = [];
-  for (const p of parts) {
-    if (p.length <= CHUNK) { out.push(p); continue; }
-    for (let i = 0; i < p.length; i += CHUNK) out.push(p.slice(i, i + CHUNK));
-  }
-  return out.length ? out : [String(t || "").slice(0, CHUNK)];
-}
-
-// POST /admin/kb -> returns real id
+// POST /admin/kb -> stable id (insert-or-return-existing)
 app.post("/admin/kb", adminGuard, async (req,res)=>{
   try{
     const content = String(req.body?.content || "");
     const meta = req.body?.meta || {};
     if (!content) return res.status(400).json({ error: "content required" });
 
-    // Prefer rag module if available
+    // Prefer module if present
     if (ragMod?.upsertOne) {
-      try {
-        const r = await ragMod.upsertOne(content, meta);
-        if (r?.id) return res.json({ id: r.id });
-      } catch (e) {
-        console.warn("ragMod.upsertOne failed, falling back:", e?.message || e);
-      }
+      const r = await ragMod.upsertOne(content, meta);
+      return res.json({ id: r?.id ?? null });
     }
 
-    // Fallback: direct insert into kb_chunks
+    // Direct Supabase upsert
     const db = await sp();
     const now = new Date().toISOString();
     let firstId = null;
+
     for (const c of splitKBText(content)) {
+      const payload = { content: c, meta, updated_at: now }; // DB computes/has content_hash
       const { data, error } = await db
         .from("kb_chunks")
-        .insert({ content: c, meta, updated_at: now })
+        .upsert(payload, { onConflict: "content_hash" })
         .select("id")
         .single();
-      if (error) return res.status(500).json({ error: error.message });
+
+      if (error) {
+        // fallback: try deterministic lookup by our app-side hash
+        try {
+          const ch = md5(normalizeForHash(c));
+          const { data: existing } = await db.from("kb_chunks").select("id").eq("content_hash", ch).single();
+          if (existing?.id) { if (!firstId) firstId = existing.id; continue; }
+        } catch {}
+        return res.status(500).json({ error: error.message });
+      }
       if (!firstId && data?.id) firstId = data.id;
     }
+
     return res.json({ id: firstId });
   }catch(e){ return res.status(500).json({ error: String(e) }); }
 });
 
-// bulk upload (kept)
+// bulk upload (dedupes each item)
 app.post("/admin/kb/upload", adminGuard, async (req,res)=>{
   try{
     const body = req.body || {};
     const items = Array.isArray(body.items) ? body.items : [{ content: body.content, meta: { src: body.filename || "upload" } }];
-    if (!ragMod?.upsertOne) {
-      // fallback: direct insert each item
-      const db = await sp();
-      const now = new Date().toISOString();
-      let n=0;
-      for(const it of items){
-        if(!it?.content) continue;
-        for(const c of splitKBText(it.content)){
-          const { error } = await db.from("kb_chunks").insert({ content:c, meta:it.meta||{}, updated_at:now });
-          if(!error) n++;
-        }
-      }
+
+    if (ragMod?.upsertOne) {
+      let n=0; for(const it of items){ if(!it?.content) continue; await ragMod.upsertOne(it.content, it.meta||{}); n++; }
       return res.json({ uploaded:n });
     }
-    let n=0; for(const it of items){ if(!it?.content) continue; await ragMod.upsertOne(it.content, it.meta||{}); n++; }
+
+    const db = await sp();
+    const now = new Date().toISOString();
+    let n=0;
+    for(const it of items){
+      if(!it?.content) continue;
+      for (const c of splitKBText(it.content)) {
+        const payload = { content: c, meta: it.meta || {}, updated_at: now };
+        const { error } = await db
+          .from("kb_chunks")
+          .upsert(payload, { onConflict: "content_hash" })
+          .select("id")
+          .single();
+
+        if (!error) n++;
+        else {
+          try {
+            const ch = md5(normalizeForHash(c));
+            const { data: existing } = await db.from("kb_chunks").select("id").eq("content_hash", ch).single();
+            if (existing?.id) { n++; continue; }
+          } catch {}
+          return res.status(500).json({ error: error.message });
+        }
+      }
+    }
     return res.json({ uploaded:n });
   }catch(e){ return res.status(500).json({error:String(e)}); }
 });
 
-// POST /admin/reindex -> returns {chunks}
+// POST /admin/reindex -> {chunks}
 app.post("/admin/reindex", adminGuard, async (_req,res)=>{
   try{
     if (ragMod?.reindex){ const r = await ragMod.reindex(); return res.json({ chunks: r?.chunks || 0 }); }
     const db = await sp();
     const { count, error } = await db.from("kb_chunks").select("id", { count: "exact", head: true });
-    if (error) { console.error("kb reindex error", error.message); return res.json({ chunks: 0 }); }
+    if (error) return res.json({ chunks: 0 });
     return res.json({ chunks: count || 0 });
-  }catch(e){ return res.status(500).json({ error: "failed" }); }
+  }catch{ return res.status(500).json({ error: "failed" }); }
 });
 
 // GET /admin/kb/count
@@ -383,7 +414,7 @@ app.get("/admin/rag", adminGuard, async (req,res)=>{
       const answer = await ragMod.answer(q, {});
       return res.json({ hits, answer });
     }
-    // fallback: naive retrieve from kb_chunks
+    // fallback: LIKE search
     const db = await sp();
     const { data } = await db.from("kb_chunks").select("content,meta,updated_at").ilike("content", `%${q}%`).order("updated_at",{ascending:false}).limit(k);
     const rows = data || [];
@@ -418,4 +449,3 @@ if (process.env.CRON_INTERVAL_MS) {
 }
 
 app.listen(PORT, ()=>{ console.log(`listening on ${PORT}`); });
-
