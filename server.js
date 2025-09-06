@@ -5,6 +5,9 @@ import { fileURLToPath } from "url";
 try { (await import("dotenv")).default.config(); } catch {}
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+try { (await import("dotenv")).default.config(); } catch {}
+
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
