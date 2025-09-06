@@ -10,6 +10,10 @@ const CRON_SECRET = process.env.CRON_SECRET || "";
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const okAdmin = (req) => req.headers["x-admin-secret"] === ADMIN_TOKEN;
+const okCron = (req) => req.headers["x-cron-secret"] === CRON_SECRET;
+
+try { (await import("dotenv")).default.config(); } catch {}
 
 try { (await import("dotenv")).default.config(); } catch {}
 
@@ -389,10 +393,6 @@ app.listen(PORT, () => {
 
 // admin helpers
 
-const okAdmin = (req) => {
-  const t = req.headers["x-admin-secret"] || "";
-  return ADMIN_TOKEN ? t === ADMIN_TOKEN : true;
-};
 const bad = (res) => res.status(401).json({ ok: false });
 
 function toISO(x){ if(!x) return null; const d = new Date(x); return isNaN(d) ? null : d.toISOString(); }
@@ -554,10 +554,6 @@ app.post("/admin/ops/run", async (req,res)=>{
 
 // admin helpers
 
-const okAdmin = (req) => {
-  const t = req.headers["x-admin-secret"] || "";
-  return ADMIN_TOKEN ? t === ADMIN_TOKEN : true;
-};
 const bad = (res) => res.status(401).json({ ok: false });
 
 function toISO(x){ if(!x) return null; const d = new Date(x); return isNaN(d) ? null : d.toISOString(); }
