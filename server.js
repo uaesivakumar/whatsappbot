@@ -13,19 +13,21 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const DATABASE_URL = process.env.DATABASE_URL || "";
 
-if (!DATABASE_URL) {
-  console.error("DATABASE_URL is required");
-  process.exit(1);
-}
-
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
+const pool = DATABASE_URL
+  ? new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  : null;
 
 const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
+
+// --- tiny logger to see health pings ---
+app.use((req, _res, next) => {
+  if (req.path === "/" || req.path.startsWith("/health") || req.path === "/__diag") {
+    console.log(`[probe] ${req.method} ${req.path}`);
+  }
+  next();
+});
 
 function stableStringify(value) {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -64,7 +66,15 @@ function adminAuth(req, res, next) {
   next();
 }
 
-app.get("/health", (req, res) => {
+// Health: support "/" and "/health" for Render probes
+app.get("/", (_req, res) => {
+  res.status(200).send("ok");
+});
+app.head("/", (_req, res) => {
+  res.status(200).end();
+});
+
+app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     uptime_sec: Math.floor(process.uptime()),
@@ -73,9 +83,11 @@ app.get("/health", (req, res) => {
     node: process.version,
   });
 });
+app.head("/health", (_req, res) => res.status(200).end());
 
-app.get("/__diag", async (req, res) => {
+app.get("/__diag", async (_req, res) => {
   try {
+    if (!pool) return res.json({ ok: true, db_ok: false, note: "no DATABASE_URL" });
     const r = await pool.query("select 1 as ok");
     res.json({
       ok: true,
@@ -87,7 +99,7 @@ app.get("/__diag", async (req, res) => {
   }
 });
 
-app.get("/admin/kb/count", adminAuth, async (req, res) => {
+app.get("/admin/kb/count", adminAuth, async (_req, res) => {
   try {
     const r = await pool.query(`select count(*)::int as count from kb_chunks`);
     res.json({ count: r.rows[0].count });
@@ -159,7 +171,7 @@ app.post("/admin/kb", adminAuth, async (req, res) => {
   }
 });
 
-app.use((req, res) => {
+app.use((_req, res) => {
   res.status(404).json({ error: "not_found" });
 });
 
