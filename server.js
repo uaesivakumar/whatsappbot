@@ -5,7 +5,13 @@ import { fileURLToPath } from "url";
 try { (await import("dotenv")).default.config(); } catch {}
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+const CRON_SECRET = process.env.CRON_SECRET || "";
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
+try { (await import("dotenv")).default.config(); } catch {}
 try { (await import("dotenv")).default.config(); } catch {}
 try { (await import("dotenv")).default.config(); } catch {}
 
@@ -21,7 +27,7 @@ const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || process.env.VERIFY_TOKEN;
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || process.env.ACCESS_TOKEN;
 const PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID || process.env.PHONE_NUMBER_ID;
 const PORT = process.env.PORT || 10000;
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || process.env.CRON_SECRET || "";
+
 const ADMIN_USER = process.env.ADMIN_USER || "";
 const ADMIN_PASS = process.env.ADMIN_PASS || "";
 
@@ -380,7 +386,7 @@ app.listen(PORT, () => {
 });
 
 // admin helpers
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || process.env.CRON_SECRET || "";
+
 const okAdmin = (req) => {
   const t = req.headers["x-admin-secret"] || "";
   return ADMIN_TOKEN ? t === ADMIN_TOKEN : true;
@@ -545,7 +551,7 @@ app.post("/admin/ops/run", async (req,res)=>{
 // console static stays protected by basic auth from earlier
 
 // admin helpers
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || process.env.CRON_SECRET || "";
+
 const okAdmin = (req) => {
   const t = req.headers["x-admin-secret"] || "";
   return ADMIN_TOKEN ? t === ADMIN_TOKEN : true;
