@@ -22,12 +22,12 @@ export async function upsertOne(content, meta={}){
 }
 
 export async function reindex(){
-  const { count, error } = await db.from("kb_chunks").select("*", { count:"exact", head:true });
+  const { count, error } = await db.from("kb_chunks").select("id", { count:"exact" });
   return { chunks: error ? 0 : (count || 0) };
 }
 
 export async function count(){
-  const { count, error } = await db.from("kb_chunks").select("*", { count:"exact", head:true });
+  const { count, error } = await db.from("kb_chunks").select("id", { count:"exact" });
   return error ? 0 : (count || 0);
 }
 
