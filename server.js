@@ -35,12 +35,8 @@ try {
   }
 } catch {}
 
-function fileExists(p) {
-  try { return fs.existsSync(p); } catch { return false; }
-}
-async function tryImport(p) {
-  try { if (!fileExists(p)) return null; return await import(p); } catch { return null; }
-}
+function fileExists(p) { try { return fs.existsSync(p); } catch { return false; } }
+async function tryImport(p) { try { if (!fileExists(p)) return null; return await import(p); } catch { return null; } }
 
 const intentsMod = await tryImport(path.join(__dirname, "src/intents/index.js"));
 const ragMod = await tryImport(path.join(__dirname, "src/rag/index.js"));
@@ -113,13 +109,26 @@ function adminGuard(req, res, next) {
   return res.status(401).json({ error: "unauthorized" });
 }
 
-app.use("/console", basicAuth, express.static(path.join(__dirname, "console/dist")));
-const serveConsole = (req, res) => res.sendFile(path.join(__dirname, "console/dist/index.html"));
-app.get("/console", basicAuth, serveConsole);
-app.get("/console/*", basicAuth, serveConsole);
+const candidateConsoleDirs = [
+  process.env.CONSOLE_DIR ? path.isAbsolute(process.env.CONSOLE_DIR) ? process.env.CONSOLE_DIR : path.join(__dirname, process.env.CONSOLE_DIR) : null,
+  path.join(__dirname, "console/dist"),
+  path.join(__dirname, "../console/dist"),
+  path.join(__dirname, "dist/console")
+].filter(Boolean);
+let CONSOLE_DIR = null;
+for (const p of candidateConsoleDirs) { try { if (fs.existsSync(path.join(p, "index.html"))) { CONSOLE_DIR = p; break; } } catch {} }
+
+if (CONSOLE_DIR) {
+  app.use("/console", basicAuth, express.static(CONSOLE_DIR));
+  const serveConsole = (req, res) => res.sendFile(path.join(CONSOLE_DIR, "index.html"));
+  app.get("/console", basicAuth, serveConsole);
+  app.get("/console/*", basicAuth, serveConsole);
+} else {
+  app.get("/console", (_, res) => res.status(404).send("console not built"));
+}
 
 app.get("/", (_, res) => res.send("OK"));
-app.get("/healthz", (_, res) => res.json({ ok: true, uptime: process.uptime() }));
+app.get("/healthz", (_, res) => res.json({ ok: true, uptime: process.uptime(), console_dir: CONSOLE_DIR || null }));
 
 app.get("/webhook", (req, res) => {
   try {
@@ -310,4 +319,4 @@ if (process.env.CRON_INTERVAL_MS) {
   setInterval(async () => { try { OPS_LAST_RUN = Date.now(); OPS_LAST_OK = true; } catch { OPS_LAST_OK = false; } }, isNaN(ms) || ms < 60000 ? 300000 : ms);
 }
 
-app.listen(PORT, () => { console.log(`listening on ${PORT}`); });
+app.listen(PORT, () => { console.log(`listening on ${PORT}`, { console_dir: CONSOLE_DIR || null }); });
