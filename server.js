@@ -1,6 +1,6 @@
 import express from "express";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 
 try { (await import("dotenv")).default.config(); } catch {}
 const __filename = fileURLToPath(import.meta.url);
@@ -32,7 +32,7 @@ try {
 } catch {}
 
 function fileExists(p){ try { return fs.existsSync(p); } catch { return false; } }
-async function tryImport(p){ try { if(!fileExists(p)) return null; return await import(p); } catch { return null; } }
+async function tryImport(p){ try{ if(!fileExists(p)) return null; const u = pathToFileURL(p).href; return await import(u); } catch { return null; } }
 
 const intentsMod = await tryImport(path.join(__dirname, "src/intents/index.js"));
 const ragMod = await tryImport(path.join(__dirname, "src/rag/index.js"));
