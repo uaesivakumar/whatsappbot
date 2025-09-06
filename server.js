@@ -7,8 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 try { (await import("dotenv")).default.config(); } catch {}
-
-import express from "express"
+try { (await import("dotenv")).default.config(); } catch {}
 
 import fs from "fs"
 
@@ -17,7 +16,6 @@ if (typeof _fetch !== "function") {
   const nf = await import("node-fetch");
   _fetch = nf.default;
 }
-
 
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || process.env.VERIFY_TOKEN;
 const ACCESS_TOKEN = process.env.META_ACCESS_TOKEN || process.env.ACCESS_TOKEN;
