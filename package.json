@@ -1,17 +1,16 @@
 {
-  "name": "whatsapp-bot-backend",
+  "name": "whatsappbot-backend",
   "version": "1.0.0",
   "type": "module",
-  "main": "src/index.js",
+  "main": "server.js",
   "scripts": {
-    "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node server.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.57.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.6.1",
-    "express": "^4.21.2",
-    "morgan": "^1.10.1"
+    "express": "^4.19.2",
+    "pg": "^8.11.3"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
