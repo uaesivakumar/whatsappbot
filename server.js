@@ -1,12 +1,16 @@
+import express from "express";
+import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
 try { (await import("dotenv")).default.config(); } catch {}
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import express from "express";import { fileURLToPath } from "url";
+try { (await import("dotenv")).default.config(); } catch {}
 
-import fs from "fs";import { fileURLToPath } from "url";
+import express from "express"
+
+import fs from "fs"
 
 let _fetch = globalThis.fetch;
 if (typeof _fetch !== "function") {
