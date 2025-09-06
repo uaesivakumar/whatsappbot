@@ -1,4 +1,3 @@
-cat > server.js <<'JS'
 import express from "express";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -419,4 +418,4 @@ if (process.env.CRON_INTERVAL_MS) {
 }
 
 app.listen(PORT, ()=>{ console.log(`listening on ${PORT}`); });
-JS
+
