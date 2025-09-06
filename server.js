@@ -103,41 +103,15 @@ function basicAuth(req, res, next) {
   return res.status(401).end("Auth required");
 }
 function adminGuard(req, res, next) {
-  if (!ADMIN_TOKEN) return res.status(401).json({ error: "admin token not set" });
-  const tok = req.headers["x-admin-secret"];
-  if (tok === ADMIN_TOKEN) return next();
+  if (ADMIN_TOKEN) {
+    const tok = req.headers["x-admin-secret"]; if (tok === ADMIN_TOKEN) return next();
+  }
+  const auth = req.headers.authorization || "";
+  if (ADMIN_USER && ADMIN_PASS && auth.startsWith("Basic ")) {
+    const creds = Buffer.from(auth.split(" ")[1] || "", "base64").toString();
+    if (creds === `:`) return next();
+  }
   return res.status(401).json({ error: "unauthorized" });
-}
-
-const candidateConsoleDirs = [
-  process.env.CONSOLE_DIR ? path.isAbsolute(process.env.CONSOLE_DIR) ? process.env.CONSOLE_DIR : path.join(__dirname, process.env.CONSOLE_DIR) : null,
-  path.join(__dirname, "console/dist"),
-  path.join(__dirname, "../console/dist"),
-  path.join(__dirname, "dist/console")
-].filter(Boolean);
-let CONSOLE_DIR = null;
-for (const p of candidateConsoleDirs) { try { if (fs.existsSync(path.join(p, "index.html"))) { CONSOLE_DIR = p; break; } } catch {} }
-
-if (CONSOLE_DIR) {
-  app.use("/console", basicAuth, express.static(CONSOLE_DIR));
-  const serveConsole = (req, res) => res.sendFile(path.join(CONSOLE_DIR, "index.html"));
-  app.get("/console", basicAuth, serveConsole);
-  app.get("/console/*", basicAuth, serveConsole);
-} else {
-  app.get("/console", (_, res) => res.status(404).send("console not built"));
-}
-
-app.get("/", (_, res) => res.send("OK"));
-app.get("/healthz", (_, res) => res.json({ ok: true, uptime: process.uptime(), console_dir: CONSOLE_DIR || null }));
-
-app.get("/webhook", (req, res) => {
-  try {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
-    if (mode === "subscribe" && token === VERIFY_TOKEN) return res.status(200).send(challenge);
-    return res.sendStatus(403);
-  } catch { return res.sendStatus(403); }
 });
 
 app.post("/webhook", async (req, res) => {
