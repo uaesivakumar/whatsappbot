@@ -7,30 +7,25 @@ dotenv.config();
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error("[adminKb] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+  console.error("[adminKb] missing env");
   process.exit(1);
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
-  global: { headers: { "X-Client-Info": "kb-admin/diag-3.0" } },
+  global: { headers: { "X-Client-Info": "kb-admin/diag" } }
 });
 
 const router = Router();
-
-function slog(tag, payload) {
-  try { console.log(`[adminKb] ${tag}:`, JSON.stringify(payload)); }
-  catch { console.log(`[adminKb] ${tag}: <unserializable>`); }
-}
+const slog = (t, o) => { try { console.log(`[adminKb] ${t}:`, JSON.stringify(o)); } catch {} };
 
 router.post("/admin/kb", async (req, res) => {
   const debug = { hash: null, rpcReturned: false, rpcError: null, selectError: null, selectRowFound: false };
   try {
     const { content, meta = null } = req.body || {};
-    if (!content || typeof content !== "string") {
-      return res.status(400).json({ error: "content (string) is required", debug });
-    }
+    if (!content || typeof content !== "string") return res.status(400).json({ error: "content_required", debug });
 
     const norm = normalizeContent(content);
     const chash = md5Hex(norm);
@@ -40,10 +35,7 @@ router.post("/admin/kb", async (req, res) => {
     let id = null;
 
     try {
-      const { data: rpcId, error: rpcErr } = await supabase.rpc("kb_upsert", {
-        p_content: norm,
-        p_meta: meta,
-      });
+      const { data: rpcId, error: rpcErr } = await supabase.rpc("kb_upsert", { p_content: norm, p_meta: meta });
       debug.rpcReturned = rpcId !== null && rpcId !== undefined;
       if (rpcErr) debug.rpcError = rpcErr.message || String(rpcErr);
       id = rpcId ?? null;
