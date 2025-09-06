@@ -1,457 +1,68 @@
-// server.js (full file)
-
 import express from "express";
-import path from "path";
-import { fileURLToPath, pathToFileURL } from "url";
-import fs from "fs";
-import { createHash } from "crypto";
+import cors from "cors";
+import morgan from "morgan";
+import dotenv from "dotenv";
+import adminKb from "./server/routes/adminKb.js";
 
-try { (await import("dotenv")).default.config(); } catch {}
+dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
-
-// ---------- env ----------
-const ADMIN_TOKEN           = process.env.ADMIN_TOKEN || "";
-const CRON_SECRET           = process.env.CRON_SECRET || "";
-const SUPABASE_URL          = process.env.SUPABASE_URL || "";
-const SUPABASE_SERVICE_KEY  = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY || "";
-const VERIFY_TOKEN          = process.env.META_VERIFY_TOKEN || process.env.VERIFY_TOKEN || "";
-const ACCESS_TOKEN          = process.env.META_ACCESS_TOKEN || process.env.ACCESS_TOKEN || "";
-const PHONE_NUMBER_ID       = process.env.META_PHONE_NUMBER_ID || process.env.PHONE_NUMBER_ID || "";
-const PORT                  = process.env.PORT || 10000;
-const ADMIN_USER            = process.env.ADMIN_USER || "";
-const ADMIN_PASS            = process.env.ADMIN_PASS || "";
-
-// ---------- fetch fallback ----------
-let _fetch = globalThis.fetch;
-if (typeof _fetch !== "function") {
-  const nf = await import("node-fetch");
-  _fetch = nf.default;
-}
-
-// ---------- dynamic helpers ----------
-function fileExists(p){ try { return fs.existsSync(p); } catch { return false; } }
-async function tryImport(p){ try{ if(!fileExists(p)) return null; const u = pathToFileURL(p).href; return await import(u); } catch { return null; } }
-
-// ---------- intents preload ----------
-const intentsPath = path.join(__dirname, "intents.json");
-let INTENTS = [];
-try {
-  if (fs.existsSync(intentsPath)) {
-    const txt = fs.readFileSync(intentsPath, "utf8");
-    const j = JSON.parse(txt || "[]");
-    INTENTS = Array.isArray(j) ? j : [];
-  }
-} catch {}
-
-// ---------- optional modules ----------
-const intentsMod    = await tryImport(path.join(__dirname, "src/intents/index.js"));
-const ragMod        = await tryImport(path.join(__dirname, "src/rag/index.js"));
-const storeMod      = await tryImport(path.join(__dirname, "src/memory/store.js"));
-const summarizerMod = await tryImport(path.join(__dirname, "src/memory/summarizer.js"));
-const profilesMod   = await tryImport(path.join(__dirname, "src/memory/profiles.js"));
-
-// ---------- in-memory convo ----------
-const MEMORY = new Map();
-function remember(waId, role, text){
-  const arr = MEMORY.get(waId) || [];
-  arr.push({ role, text, ts: Date.now() });
-  if (arr.length > 20) arr.splice(0, arr.length - 20);
-  MEMORY.set(waId, arr);
-}
-function recentContext(waId){ return MEMORY.get(waId) || []; }
-
-// ---------- intent fallback ----------
-function naiveDetect(text){
-  const t = String(text||"").toLowerCase();
-  let best = { name: "unknown", confidence: 0 };
-  for(const it of INTENTS){
-    const patterns = it.examples || it.utterances || [];
-    for(const p of patterns){
-      if (t.includes(String(p).toLowerCase())) { best = { name: it.name || it.intent || "unknown", confidence: 0.7 }; break; }
-    }
-    if (best.name !== "unknown") break;
-  }
-  return best;
-}
-
-// ---------- WA send ----------
-async function sendText(to, text){
-  if (!ACCESS_TOKEN || !PHONE_NUMBER_ID) return false;
-  const url  = `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`;
-  const body = { messaging_product: "whatsapp", to, type: "text", text: { body: String(text||"") } };
-  const res  = await _fetch(url, { method: "POST", headers: { Authorization: `Bearer ${ACCESS_TOKEN}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  try { const info = await res.text(); console.log("[OUT]", to, res.status, info?.slice(0, 180)); } catch {}
-  return res.ok;
-}
-
-// ---------- reply generator ----------
-async function generateReply({ waId, text }){
-  let intentRes;
-  try { intentRes = intentsMod?.detectIntent ? await intentsMod.detectIntent(text, INTENTS, { context: recentContext(waId) }) : naiveDetect(text); }
-  catch { intentRes = { name: "unknown", confidence: 0 }; }
-
-  if (intentRes && intentRes.name !== "unknown" && (intentRes.confidence ?? 0) >= 0.6){
-    try {
-      if (intentsMod?.routeIntent){
-        const r = await intentsMod.routeIntent(intentRes.name, text, { intents: INTENTS, memory: recentContext(waId), waId });
-        if (r) return r;
-      }
-      if (intentsMod?.handleIntent){
-        const r = await intentsMod.handleIntent(intentRes.name, text, { intents: INTENTS, memory: recentContext(waId), waId });
-        if (r) return r;
-      }
-    } catch {}
-  }
-
-  if (ragMod?.answer){
-    try { const r = await ragMod.answer(text, { memory: recentContext(waId), userId: waId }); if (r) return r; } catch {}
-  }
-
-  return "Hello! How can I assist you today?";
-}
-
-// ---------- supabase lazy client ----------
-let _sp = null;
-async function sp(){
-  if (_sp) return _sp;
-  const { createClient } = await import("@supabase/supabase-js");
-  _sp = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-  return _sp;
-}
-
-// ---------- small utils ----------
-function toISO(x){ if(!x) return null; const d = new Date(x); return isNaN(d) ? null : d.toISOString(); }
-function toCSV(rows, headers){
-  const esc=(v)=> `"${String(v??"").replace(/"/g,'""')}"`;
-  const head = headers.map(esc).join(",");
-  const body = rows.map(r => headers.map(h => esc(r[h])).join(",")).join("\n");
-  return head + "\n" + body + "\n";
-}
-function splitKBText(t, CHUNK=800){
-  const parts = String(t || "").split(/\n{2,}/).map(x => x.trim()).filter(Boolean);
-  const out = [];
-  for (const p of parts) {
-    if (p.length <= CHUNK) { out.push(p); continue; }
-    for (let i = 0; i < p.length; i += CHUNK) out.push(p.slice(i, i + CHUNK));
-  }
-  return out.length ? out : [String(t || "").slice(0, CHUNK)];
-}
-function normalizeForHash(text){
-  return String(text || "").toLowerCase().trim().replace(/\s+/g, " ");
-}
-function md5(text){
-  return createHash("md5").update(String(text || ""), "utf8").digest("hex");
-}
-
-// ---------- express ----------
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+const PORT = Number(process.env.PORT || 10000);
 
-// ---------- basic auth for console ----------
-function basicAuth(req, res, next){
-  if(!ADMIN_USER) return next();
-  const hdr = req.headers.authorization || "";
-  const parts = hdr.split(" ");
-  const ok = parts[0] === "Basic" && Buffer.from(parts[1] || "", "base64").toString() === `${ADMIN_USER}:${ADMIN_PASS}`;
-  if(ok) return next();
-  res.set("WWW-Authenticate",'Basic realm="console"');
-  return res.status(401).end("Auth required");
-}
+app.use(morgan("tiny"));
+app.use(cors());
+app.use(express.json({ limit: "5mb" }));
+app.use(express.urlencoded({ extended: true }));
 
-const consoleDir = path.join(__dirname, "console/dist");
-if (fs.existsSync(consoleDir)) {
-  app.use("/console", basicAuth, express.static(consoleDir));
-  const serveConsole = (_req, res) => res.sendFile(path.join(consoleDir, "index.html"));
-  app.get("/console", basicAuth, serveConsole);
-  app.get("/console/*", basicAuth, serveConsole);
-} else {
-  app.get("/console", basicAuth, (_req,res)=>res.status(404).send("console not built"));
-  app.get("/console/*", basicAuth, (_req,res)=>res.status(404).send("console not built"));
-}
-
-// ---------- health ----------
-app.get("/", (_req,res)=>res.send("OK"));
-app.get("/healthz", (_req,res)=>res.json({ ok:true, uptime: process.uptime(), console_dir: fs.existsSync(consoleDir) ? consoleDir : null }));
-
-// ---------- webhook ----------
-app.get("/webhook", (req, res) => {
+function supabaseRole() {
   try {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
-    if (mode === "subscribe" && token === VERIFY_TOKEN) return res.status(200).send(challenge);
-    return res.sendStatus(403);
-  } catch { return res.sendStatus(403); }
-});
-
-app.post("/webhook", async (req, res) => {
-  try {
-    res.sendStatus(200);
-    const entries = req.body?.entry || [];
-    for (const entry of entries) {
-      const changes = entry?.value?.messages ? [entry] : (entry?.changes || []);
-      for (const change of changes) {
-        const messages = change?.value?.messages || [];
-        for (const msg of messages) {
-          if (msg.type !== "text") continue;
-          const waId = msg?.from;
-          const text = msg?.text?.body || "";
-          console.log("[IN]", waId, text?.slice(0, 180));
-          remember(waId, "user", text);
-          try { if (storeMod?.appendMessage) await storeMod.appendMessage({ wa_id: waId, role: "user", text, ts: Date.now() }); } catch {}
-          const reply = await generateReply({ waId, text });
-          await sendText(waId, reply);
-          remember(waId, "bot", reply);
-          try { if (storeMod?.appendMessage) await storeMod.appendMessage({ wa_id: waId, role: "bot", text: reply, ts: Date.now() }); } catch {}
-        }
-      }
-    }
-  } catch (e) { console.error("webhook error", e); }
-});
-
-// ---------- admin guard ----------
-function adminGuard(req,res,next){
-  if(!ADMIN_TOKEN) return res.status(401).json({ error: "admin token not set" });
-  const tok = req.headers["x-admin-secret"];
-  if (tok && tok === ADMIN_TOKEN) return next();
-  return res.status(401).json({ error: "unauthorized" });
+    const k = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+    const mid = (k.split(".")[1] || "").replace(/-/g, "+").replace(/_/g, "/");
+    const json = mid ? JSON.parse(Buffer.from(mid, "base64").toString("utf8")) : {};
+    return json.role || "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
-// ---------- admin: messages / profile / search ----------
-app.get("/admin/messages", adminGuard, async (req,res)=>{
-  try{
-    const waId = req.query.waId || req.query.waid || "";
-    const from = toISO(req.query.from || req.query.from_iso);
-    const to   = toISO(req.query.to || req.query.to_iso);
-    const db   = await sp();
-    let q = db.from("messages").select("role,text,ts,wa_id").eq("wa_id", waId).order("ts",{ascending:true});
-    if(from) q = q.gte("ts", Math.floor(new Date(from).getTime()));
-    if(to)   q = q.lte("ts", Math.floor(new Date(to).getTime()));
-    const { data, error } = await q.limit(2000);
-    if(error) return res.status(500).json({error:error.message});
-    return res.json({ waId, count: data?.length||0, messages: data||[] });
-  }catch(e){ return res.status(500).json({error:String(e)}); }
-});
-
-app.get("/admin/messages.csv", adminGuard, async (req,res)=>{
-  try{
-    const waId = req.query.waId || req.query.waid || "";
-    const from = toISO(req.query.from || req.query.from_iso);
-    const to   = toISO(req.query.to || req.query.to_iso);
-    const db   = await sp();
-    let q = db.from("messages").select("role,text,ts,wa_id").eq("wa_id", waId).order("ts",{ascending:true});
-    if(from) q = q.gte("ts", Math.floor(new Date(from).getTime()));
-    if(to)   q = q.lte("ts", Math.floor(new Date(to).getTime()));
-    const { data, error } = await q.limit(5000);
-    if(error) return res.status(500).send(error.message);
-    const rows = (data||[]).map(r=>({role:r.role,text:r.text,ts:r.ts}));
-    const csv  = toCSV(rows,["role","text","ts"]);
-    res.setHeader("Content-Type","text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename="messages_${waId}.csv"`);
-    return res.send(csv);
-  }catch(e){ return res.status(500).send(String(e)); }
-});
-
-app.get("/admin/profile", adminGuard, async (req,res)=>{
-  try{
-    const waId = String(req.query.waId || "");
-    let profile = null;
-    if (profilesMod?.getProfile) profile = await profilesMod.getProfile(waId);
-    return res.json({ waId, profile });
-  }catch{ return res.status(500).json({ error: "failed" }); }
-});
-
-app.post("/admin/profile", adminGuard, async (req,res)=>{
-  try{
-    const waId = String(req.body.waId || "");
-    const data = req.body || {};
-    if (profilesMod?.upsertProfile) {
-      const profile = await profilesMod.upsertProfile(waId, data);
-      return res.json({ waId, profile, saved: true });
+app.get("/__diag", (_req, res) => {
+  const stack = [];
+  function walk(layer, parent = "") {
+    if (layer.route && layer.route.path) {
+      stack.push(parent + layer.route.path);
+    } else if (layer.name === "router" && layer.handle.stack) {
+      layer.handle.stack.forEach((l) => walk(l, parent));
+    } else if (layer.regexp && layer.handle?.stack) {
+      const m = layer.regexp.toString().match(/^\/*\^\\\/\(\?\:([^^]+?)\\\/\)\?\(\?\=\\\/\|\$\)\/i$/);
+      const base = m && m[1] ? `/${m[1]}`.replace(/\\\//g, "/") : "";
+      layer.handle.stack.forEach((l) => walk(l, base));
     }
-    return res.json({ waId, saved: false });
-  }catch{ return res.status(500).json({ error: "failed" }); }
+  }
+  app._router.stack.forEach((l) => walk(l));
+  res.json({
+    ok: true,
+    node: process.version,
+    port: PORT,
+    env: {
+      SUPABASE_URL_set: Boolean(process.env.SUPABASE_URL),
+      SUPABASE_SERVICE_ROLE_KEY_len: (process.env.SUPABASE_SERVICE_ROLE_KEY || "").length,
+      SUPABASE_KEY_ROLE: supabaseRole(),
+      NODE_ENV: process.env.NODE_ENV || "",
+    },
+    routes: stack.sort(),
+  });
 });
 
-app.get("/admin/search", adminGuard, async (req,res)=>{
-  try{
-    const q = { company: req.query.company || "", prefers: req.query.prefers || "", min_salary: req.query.min_salary || req.query.minSalary || "" };
-    let rows = [];
-    if (profilesMod?.searchProfiles) rows = await profilesMod.searchProfiles(q);
-    return res.json({ count: rows?.length || 0, rows: rows || [] });
-  }catch{ return res.status(500).json({ error: "failed" }); }
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, uptime_s: Math.round(process.uptime()) });
 });
 
-app.get("/admin/search.csv", adminGuard, async (req,res)=>{
-  try{
-    const q = { company: req.query.company || "", prefers: req.query.prefers || "", min_salary: req.query.min_salary || req.query.minSalary || "" };
-    let rows = [];
-    if (profilesMod?.searchProfiles) rows = await profilesMod.searchProfiles(q);
-    const header = "wa_id,company,salary_aed,prefers,liabilities_aed,notes,updated_at";
-    const out = [header, ...(rows || []).map(r => `"${r.wa_id}","${r.company || ""}","${r.salary_aed ?? ""}","${r.prefers || ""}","${r.liabilities_aed ?? ""}","${(r.notes || "").replace(/"/g, '""')}","${r.updated_at || ""}"`)].join("\n");
-    res.setHeader("Content-Type", "text/csv");
-    return res.send(out);
-  }catch{ return res.status(500).send("error"); }
+app.use("/", adminKb);
+
+app.use((req, res) => {
+  res.status(404).json({ error: "not_found" });
 });
 
-// ---------- admin: KB (ALWAYS DB UPSERT → return real id) ----------
-app.post("/admin/kb", adminGuard, async (req,res)=>{
-  try{
-    const content = String(req.body?.content || "");
-    const meta    = req.body?.meta || {};
-    if (!content) return res.status(400).json({ error: "content required" });
-
-    const db  = await sp();
-    const now = new Date().toISOString();
-    const chunks = splitKBText(content);
-
-    let firstId = null;
-    for (const c of chunks) {
-      const ch = md5(normalizeForHash(c));
-      const payload = { content: c, meta, content_hash: ch, updated_at: now };
-
-      // Upsert by content_hash and try to get back id
-      let { data, error } = await db
-        .from("kb_chunks")
-        .upsert(payload, { onConflict: "content_hash" })
-        .select("id")
-        .single();
-
-      // If PostgREST didn't return, lookup
-      if ((!data || !data.id) && !error) {
-        const lookup = await db.from("kb_chunks").select("id").eq("content_hash", ch).single();
-        data  = lookup.data;
-        error = lookup.error;
-      }
-      if (error) return res.status(500).json({ error: error.message });
-      if (!firstId && data?.id) firstId = data.id;
-    }
-    return res.json({ id: firstId });
-  } catch(e){ return res.status(500).json({ error: String(e) }); }
+app.listen(PORT, () => {
+  console.log(`[startup] listening on :${PORT}, supabase key role: ${supabaseRole()}`);
 });
-
-app.post("/admin/kb/upload", adminGuard, async (req,res)=>{
-  try{
-    const body  = req.body || {};
-    const items = Array.isArray(body.items)
-      ? body.items
-      : [{ content: body.content, meta: { src: body.filename || "upload" } }];
-
-    const db  = await sp();
-    const now = new Date().toISOString();
-    let n = 0;
-
-    for (const it of items) {
-      if (!it?.content) continue;
-      for (const c of splitKBText(it.content)) {
-        const ch = md5(normalizeForHash(c));
-        const payload = { content: c, meta: it.meta || {}, content_hash: ch, updated_at: now };
-
-        let { data, error } = await db
-          .from("kb_chunks")
-          .upsert(payload, { onConflict: "content_hash" })
-          .select("id")
-          .single();
-
-        if ((!data || !data.id) && !error) {
-          const lookup = await db.from("kb_chunks").select("id").eq("content_hash", ch).single();
-          data  = lookup.data;
-          error = lookup.error;
-        }
-        if (error) return res.status(500).json({ error: error.message });
-        n++;
-      }
-    }
-    return res.json({ uploaded: n });
-  } catch(e){ return res.status(500).json({ error: String(e) }); }
-});
-
-app.post("/admin/reindex", adminGuard, async (_req,res)=>{
-  try{
-    if (ragMod?.reindex){ const r = await ragMod.reindex(); return res.json({ chunks: r?.chunks || 0 }); }
-    // fallback: count rows
-    const db = await sp();
-    const { count, error } = await db.from("kb_chunks").select("id", { count: "exact", head: true });
-    if (error) return res.json({ chunks: 0 });
-    return res.json({ chunks: count || 0 });
-  }catch{ return res.status(500).json({ error: "failed" }); }
-});
-
-app.get("/admin/kb/count", adminGuard, async (_req,res)=>{
-  try{
-    if (ragMod?.count){ const c = await ragMod.count(); return res.json({ count: c || 0 }); }
-    const db = await sp();
-    const { count, error } = await db.from("kb_chunks").select("id", { count: "exact", head: true });
-    return res.json({ count: error ? 0 : (count || 0) });
-  }catch{ return res.status(500).json({ error: "failed" }); }
-});
-
-app.get("/admin/kb/list", adminGuard, async (req,res)=>{
-  try{
-    const limit = Math.max(1, Math.min(1000, Number(req.query.limit || 20)));
-    if (ragMod?.list){ const rows = await ragMod.list({ limit }); return res.json({ rows: rows || [] }); }
-    const db = await sp();
-    const { data, error } = await db
-      .from("kb_chunks")
-      .select("id,meta,updated_at")
-      .order("updated_at",{ascending:false})
-      .limit(limit);
-    return res.json({ rows: error ? [] : (data || []) });
-  }catch{ return res.status(500).json({ error: "failed" }); }
-});
-
-app.get("/admin/rag", adminGuard, async (req,res)=>{
-  try{
-    const q = String(req.query.q || "");
-    if (!q) return res.json({ hits: [], answer: null });
-    const k = Math.max(1, Math.min(50, Number(req.query.k || 5) || 5));
-    const minSim = req.query.min_similarity != null ? Number(req.query.min_similarity) : undefined;
-    if (ragMod?.retrieve && ragMod?.answer){
-      const opts = { k }; if (!Number.isNaN(minSim)) opts.minSimilarity = minSim;
-      const hits   = (await ragMod.retrieve(q, opts)) || [];
-      const answer = await ragMod.answer(q, {});
-      return res.json({ hits, answer });
-    }
-    // fallback: simple search
-    const db = await sp();
-    const { data } = await db
-      .from("kb_chunks")
-      .select("content,meta,updated_at")
-      .ilike("content", `%${q}%`)
-      .order("updated_at",{ascending:false})
-      .limit(k);
-    const rows = data || [];
-    const hits = rows.map((r,i)=>({ content:r.content, meta:r.meta||{}, similarity: 1 - i*0.1 }));
-    return res.json({ hits, answer: hits[0]?.content ? hits[0].content.slice(0, 180) : null });
-  }catch{ return res.status(500).json({ error: "failed" }); }
-});
-
-// ---------- ops ----------
-let OPS_LAST_RUN = 0;
-let OPS_LAST_OK  = null;
-
-app.get("/admin/ops/status", adminGuard, (_req,res)=>{
-  const enabled = !!process.env.CRON_INTERVAL_MS;
-  return res.json({ enabled, interval_ms: Number(process.env.CRON_INTERVAL_MS||0), last_run_ts: OPS_LAST_RUN, last_result: OPS_LAST_OK });
-});
-
-app.post("/admin/ops/run", adminGuard, async (_req,res)=>{
-  try{
-    OPS_LAST_RUN = Date.now();
-    try { await import("./src/memory/summarizer.js"); OPS_LAST_OK = true; return res.json({ ok:true, ts: OPS_LAST_RUN }); }
-    catch(e){ OPS_LAST_OK = false; return res.status(500).json({ ok:false, error:String(e) }); }
-  }catch(e){ return res.status(500).json({ ok:false, error:String(e) }); }
-});
-
-if (process.env.CRON_INTERVAL_MS) {
-  const ms = Number(process.env.CRON_INTERVAL_MS);
-  setInterval(async () => {
-    try { OPS_LAST_RUN = Date.now(); OPS_LAST_OK = true; }
-    catch { OPS_LAST_OK = false; }
-  }, isNaN(ms) || ms < 60000 ? 300000 : ms);
-}
-
-// ---------- listen ----------
-app.listen(PORT, ()=>{ console.log(`listening on ${PORT}`); });

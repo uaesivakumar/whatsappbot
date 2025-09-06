@@ -1,0 +1,45 @@
+"role","text","ts"
+"user","hi, how are you","1757090452407"
+"bot","Hi! I can help with loans, cards, accounts, and home loans. What would you like to explore?","1757090454297"
+"user","loan","1757096614157"
+"bot","💼 Loans — I can estimate eligibility fast.
+
+Your saved details:
+• Company: ENBD
+• Salary: AED 12,000
+
+Please share:
+• Current liabilities (cards/loans — approx.)","1757096616054"
+"user","credit card","1757096670406"
+"bot","💳 Credit Cards — I’ll suggest the best fit.
+
+Your saved details:
+• Company: ENBD
+• Salary: AED 12,000
+• Preference: cashback
+
+Perfect — using your profile, I’ll tailor the options.
+
+I’ll reply with 1–2 options and a quick benefits summary.","1757096671492"
+"user","my salary is 15,000
+
+i prefer travel cards
+
+i pay around 2k on cards","1757097114331"
+"bot","I didn’t fully catch that. Could you share a bit more or phrase it differently?","1757097115440"
+"user","my salary is 15,000
+
+i prefer travel cards
+
+i pay around 2k on cards","1757097445970"
+"bot","I didn’t fully catch that. Could you share a bit more or phrase it differently?","1757097447120"
+"user","my salary is 15,000
+
+i pay around 2k on cards","1757097646446"
+"bot","I didn’t fully catch that. Could you share a bit more or phrase it differently?","1757097647970"
+"user","my salary is 15,000
+
+i prefer travel cards
+
+i pay around 2k on cards","1757097954648"
+"bot","Got it — noted your salary as AED 15,000; noted your preference: travel.","1757097955960"
