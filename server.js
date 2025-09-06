@@ -8,6 +8,8 @@ const __dirname = path.dirname(__filename);
 
 try { (await import("dotenv")).default.config(); } catch {}
 
+try { (await import("dotenv")).default.config(); } catch {}
+
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
@@ -20,9 +22,6 @@ const bad     = (res) => res.status(401).json({ ok: false });
 try { (await import("dotenv")).default.config(); } catch {}
 
 try { (await import("dotenv")).default.config(); } catch {}
-
-const okAdmin = (req) => req.headers["x-admin-secret"] === ADMIN_TOKEN;
-const okCron = (req) => req.headers["x-cron-secret"] === CRON_SECRET;
 
 try { (await import("dotenv")).default.config(); } catch {}
 
@@ -404,8 +403,6 @@ app.listen(PORT, () => {
 
 // admin helpers
 
-const bad = (res) => res.status(401).json({ ok: false });
-
 function toISO(x){ if(!x) return null; const d = new Date(x); return isNaN(d) ? null : d.toISOString(); }
 function toCSV(rows, headers){
   const esc=(v)=> `"${String(v??"").replace(/"/g,'""')}"`;
@@ -574,7 +571,6 @@ function toCSV(rows, headers){
 }
 
 // supabase client on demand
-let _sp = null;
 async function sp(){
   if (_sp) return _sp;
   const { createClient } = await import("@supabase/supabase-js");
@@ -698,8 +694,6 @@ app.post("/admin/kb/upload", async (req,res)=>{
 });
 
 // ops status + trigger
-let OPS_LAST_RUN = 0;
-let OPS_LAST_OK = null;
 
 app.get("/admin/ops/status", (_req,res)=>{
   const enabled = !!process.env.CRON_INTERVAL_MS;
