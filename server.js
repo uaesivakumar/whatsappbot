@@ -12,6 +12,8 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
 try { (await import("dotenv")).default.config(); } catch {}
+
+try { (await import("dotenv")).default.config(); } catch {}
 try { (await import("dotenv")).default.config(); } catch {}
 try { (await import("dotenv")).default.config(); } catch {}
 
