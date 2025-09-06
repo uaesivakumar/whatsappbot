@@ -294,17 +294,32 @@ app.get("/console/token",(req,res)=>{res.type("html").send(`<!doctype html><meta
 
 app.get("/admin/waids", adminGuard, async (req,res)=>{try{const limit=Number(req.query.limit||50);const db=await sp();const {data,error}=await db.from("messages").select("wa_id,ts").order("ts",{ascending:false}).limit(5000);if(error)return res.status(500).json({error:error.message});const m=new Map();for(const r of (data||[])){const k=r.wa_id;const t=Number(r.ts||0);const v=m.get(k)||{wa_id:k,last_ts:0,count:0};v.count++;if(t>v.last_ts)v.last_ts=t;m.set(k,v);}const rows=Array.from(m.values()).sort((a,b)=>b.last_ts-a.last_ts).slice(0,limit);return res.json({count:rows.length,rows});}catch(e){return res.status(500).json({error:String(e)})}});
 
-app.post("/ops/run-summarizer", async (req,res)=>{try{const h=req.headers["x-cron-secret"];if(!process.env.CRON_SECRET||h!==process.env.CRON_SECRET)return res.status(401).json({ok:false});OPS_LAST_RUN=Date.now();try{await import("./src/memory/summarizer.js");OPS_LAST_OK=true;return res.json({ok:true,ts:OPS_LAST_RUN});}catch(e){OPS_LAST_OK=false;return res.status(500).json({ok:false,error:String(e)})}}catch(e){return res.status(500).json({ok:false,error:String(e)})}});
+OPS_LAST_RUN=Date.now();try{await import("./src/memory/summarizer.js");OPS_LAST_OK=true;return res.json({ok:true,ts:OPS_LAST_RUN});}catch(e){OPS_LAST_OK=false;return res.status(500).json({ok:false,error:String(e)})}}catch(e){return res.status(500).json({ok:false,error:String(e)})}});
 
-app.post("/ops/run-summarizer", async (req,res)=>{try{ if(!CRON_SECRET||req.headers["x-cron-secret"]!==CRON_SECRET) return res.status(401).json({ok:false}); OPS_LAST_RUN=Date.now(); try{ await import("./src/memory/summarizer.js"); OPS_LAST_OK=true; return res.json({ok:true,ts:OPS_LAST_RUN}); }catch(e){ OPS_LAST_OK=false; return res.status(500).json({ok:false,error:String(e)});} }catch(e){ return res.status(500).json({ok:false,error:String(e)});} });
+OPS_LAST_RUN=Date.now(); try{ await import("./src/memory/summarizer.js"); OPS_LAST_OK=true; return res.json({ok:true,ts:OPS_LAST_RUN}); }catch(e){ OPS_LAST_OK=false; return res.status(500).json({ok:false,error:String(e)});} }catch(e){ return res.status(500).json({ok:false,error:String(e)});} });
 
-app.post("/ops/run-summarizer", async (req,res)=>{try{ if(!CRON_SECRET||req.headers["x-cron-secret"]!==CRON_SECRET) return res.status(401).json({ok:false}); OPS_LAST_RUN=Date.now(); try{ await import("./src/memory/summarizer.js"); OPS_LAST_OK=true; return res.json({ok:true,ts:OPS_LAST_RUN}); }catch(e){ OPS_LAST_OK=false; return res.status(500).json({ok:false,error:String(e)});} }catch(e){ return res.status(500).json({ok:false,error:String(e)});} });
+OPS_LAST_RUN=Date.now(); try{ await import("./src/memory/summarizer.js"); OPS_LAST_OK=true; return res.json({ok:true,ts:OPS_LAST_RUN}); }catch(e){ OPS_LAST_OK=false; return res.status(500).json({ok:false,error:String(e)});} }catch(e){ return res.status(500).json({ok:false,error:String(e)});} });
 
-app.listen(PORT, () => { console.log(`listening on ${PORT}`, { console_dir: CONSOLE_DIR || null }); });
+
 app.post("/ops/run-summarizer", async (req,res) => {
   try {
     if (!CRON_SECRET || req.headers["x-cron-secret"] !== CRON_SECRET) return res.status(401).json({ ok:false });
     OPS_LAST_RUN = Date.now();
+    try {
+      if (summarizerMod?.buildAndSaveSummary) { await summarizerMod.buildAndSaveSummary("*"); }
+      OPS_LAST_OK = true;
+      return res.json({ ok:true, ts: OPS_LAST_RUN });
+    } catch (e) {
+      OPS_LAST_OK = false;
+      return res.status(500).json({ ok:false, error: String(e) });
+    }
+  } catch (e) {
+    return res.status(500).json({ ok:false, error: String(e) });
+  }
+});
+
+app.listen(PORT, () => { console.log(`listening on ${PORT}`, { console_dir: CONSOLE_DIR || null }); });
+OPS_LAST_RUN = Date.now();
     try {
       if (typeof summarizerMod?.buildAndSaveSummary === "function") { OPS_LAST_OK = true; return res.json({ ok:true, ts: OPS_LAST_RUN }); }
       await import("./src/memory/summarizer.js");
@@ -318,10 +333,7 @@ app.post("/ops/run-summarizer", async (req,res) => {
     return res.status(500).json({ ok:false, error: String(e) });
   }
 });
-app.post("/ops/run-summarizer", async (req,res) => {
-  try {
-    if (!CRON_SECRET || req.headers["x-cron-secret"] !== CRON_SECRET) return res.status(401).json({ ok:false });
-    OPS_LAST_RUN = Date.now();
+OPS_LAST_RUN = Date.now();
     try {
       if (summarizerMod?.buildAndSaveSummary) { await summarizerMod.buildAndSaveSummary("*"); }
       OPS_LAST_OK = true;
