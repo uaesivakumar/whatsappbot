@@ -22,23 +22,23 @@ export async function upsertOne(content, meta={}){
 }
 
 export async function reindex(){
-  const { count } = await db.from("kb_chunks").select("*", { count:"exact", head:true });
-  return { chunks: count || 0 };
+  const { count, error } = await db.from("kb_chunks").select("*", { count:"exact", head:true });
+  return { chunks: error ? 0 : (count || 0) };
 }
 
 export async function count(){
-  const { count } = await db.from("kb_chunks").select("*", { count:"exact", head:true });
-  return count || 0;
+  const { count, error } = await db.from("kb_chunks").select("*", { count:"exact", head:true });
+  return error ? 0 : (count || 0);
 }
 
 export async function list({ limit=20 }={}){
-  const { data } = await db.from("kb_chunks").select("id,meta,updated_at").order("updated_at",{ascending:false}).limit(limit);
-  return data || [];
+  const { data, error } = await db.from("kb_chunks").select("id,meta,updated_at").order("updated_at",{ascending:false}).limit(limit);
+  return error ? [] : (data || []);
 }
 
 export async function retrieve(q,{k=5}={}){
-  const { data } = await db.from("kb_chunks").select("content,meta,updated_at").ilike("content", `%${q}%`).order("updated_at",{ascending:false}).limit(k);
-  const rows = data || [];
+  const { data, error } = await db.from("kb_chunks").select("content,meta,updated_at").ilike("content", `%${q}%`).order("updated_at",{ascending:false}).limit(k);
+  const rows = error ? [] : (data || []);
   return rows.map((r,i)=>({ content:r.content, meta:r.meta||{}, similarity: 1 - i*0.1 }));
 }
 
