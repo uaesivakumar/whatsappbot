@@ -1,105 +1,133 @@
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin Console</title>
-<style>
-body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;margin:24px;max-width:900px}
-h1{font-size:20px;margin:0 0 12px}
-label{display:block;margin:12px 0 4px;font-weight:600}
-input,textarea,button,select{font:inherit}
-input[type=text],textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px}
-textarea{min-height:110px}
-.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-button{padding:10px 14px;border:1px solid #111;background:#111;color:#fff;border-radius:8px;cursor:pointer}
-button.secondary{background:#fff;color:#111}
-pre{background:#0b1020;color:#d8e1ff;padding:12px;border-radius:8px;white-space:pre-wrap;word-break:break-word}
-.small{font-size:12px;color:#666}
-hr{border:none;height:1px;background:#eee;margin:20px 0}
-.badge{padding:2px 6px;border:1px solid #ccc;border-radius:999px;font-size:12px}
-</style>
-</head>
-<body>
-<h1>Admin Console <span id="status" class="badge">checking…</span></h1>
+// server.js
+import express from "express";
+import crypto from "crypto";
+import { Pool } from "pg";
+import path from "path";
+import { fileURLToPath } from "url";
 
-<div class="row">
-  <div style="flex:1 1 280px">
-    <label>Base URL</label>
-    <input id="base" type="text" value="">
-    <div class="small">Example: https://whatsappbot-7agd.onrender.com</div>
-  </div>
-  <div style="flex:1 1 280px">
-    <label>Admin Token</label>
-    <input id="token" type="text" placeholder="Bearer token">
-    <div class="small">Your ADMIN_TOKEN (not stored on server)</div>
-  </div>
-</div>
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-<hr>
+const app = express();
+app.use(express.json());
 
-<div>
-  <label>New KB Content</label>
-  <textarea id="content" placeholder="Paste text…"></textarea>
-  <label>Meta (JSON)</label>
-  <input id="meta" type="text" value='{"src":"console"}'>
-  <div class="row" style="margin-top:10px">
-    <button id="btn-insert">Insert KB Row</button>
-    <button id="btn-count" class="secondary">Count</button>
-    <button id="btn-list" class="secondary">List 5</button>
-    <button id="btn-diag" class="secondary">__diag</button>
-  </div>
-</div>
+// ---- config
+const PORT = process.env.PORT || 10000;
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || process.env.ADMIN || "";
+const DB_URL = process.env.DATABASE_URL || process.env.SUPABASE_URL || "";
 
-<hr>
-<pre id="out">Ready.</pre>
-
-<script>
-const $ = id => document.getElementById(id);
-function b(){ return ($("base").value || "").replace(/\/+$/,""); }
-function t(){ return $("token").value.trim(); }
-function hdr(){ return { "Authorization": "Bearer " + t(), "Content-Type": "application/json" }; }
-function show(x){ $("out").textContent = typeof x==="string" ? x : JSON.stringify(x,null,2); }
-
-async function ping(){
-  try{
-    const r = await fetch(b()+"/__diag");
-    const j = await r.json();
-    $("status").textContent = j.db_ok ? "db:ok" : "db:fail";
-  }catch(e){ $("status").textContent = "offline"; }
+// ---- db pool (TLS tolerated for poolers etc.)
+let pool = null;
+if (DB_URL) {
+  pool = new Pool({
+    connectionString: DB_URL,
+    ssl: { rejectUnauthorized: false },
+  });
 }
 
-$("btn-diag").onclick = async ()=>{
-  const r = await fetch(b()+"/__diag");
-  show(await r.json());
-};
+// ---- static sites
+// root site (your existing /public)
+app.use(express.static(path.join(__dirname, "public")));
 
-$("btn-count").onclick = async ()=>{
-  const r = await fetch(b()+"/admin/kb/count",{headers:{Authorization:"Bearer "+t()}});
-  show(await r.json());
-};
+// admin console at /console (your console/public)
+app.use("/console", express.static(path.join(__dirname, "console", "public")));
 
-$("btn-list").onclick = async ()=>{
-  const r = await fetch(b()+"/admin/kb/list?limit=5",{headers:{Authorization:"Bearer "+t()}});
-  show(await r.json());
-};
+// ---- health & diag
+app.get("/health", (req, res) => {
+  res.json({ ok: true });
+});
 
-$("btn-insert").onclick = async ()=>{
-  const content = $("content").value.trim();
-  if(!content){ show("content required"); return; }
-  let meta = {};
-  const mv = $("meta").value.trim();
-  try{ if(mv) meta = JSON.parse(mv); }catch(e){ show("meta must be JSON"); return; }
-  const r = await fetch(b()+"/admin/kb",{method:"POST", headers:hdr(), body:JSON.stringify({content, meta})});
-  const j = await r.json();
-  show(j);
-};
+app.get("/__diag", async (req, res) => {
+  const diag = { ok: true, env: { has_port: !!PORT, has_db_url: !!DB_URL } };
+  if (!pool) return res.status(200).json({ ...diag, db_ok: false, error: "no_pool" });
+  try {
+    const c = await pool.connect();
+    try {
+      const host = c.connectionParameters.host;
+      const port = String(c.connectionParameters.port || 5432);
+      await c.query("select 1");
+      res.json({ ...diag, db_ok: true, db_host: host, db_port: port });
+    } finally {
+      c.release();
+    }
+  } catch (e) {
+    res.status(500).json({
+      ...diag,
+      db_ok: false,
+      db_host: pool.options?.host,
+      db_port: String(pool.options?.port || 5432),
+      error: e.message || String(e),
+    });
+  }
+});
 
-(function init(){
-  const loc = window.location.origin;
-  $("base").value = loc;
-  ping();
-})();
-</script>
-</body>
-</html>
+// ---- admin auth
+function auth(req, res, next) {
+  const h = req.headers.authorization || "";
+  const token = h.startsWith("Bearer ") ? h.slice(7) : "";
+  if (ADMIN_TOKEN && token === ADMIN_TOKEN) return next();
+  res.status(401).json({ error: "unauthorized" });
+}
+
+// ---- bootstrap schema
+async function ensureSchema() {
+  if (!pool) return;
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS kb_chunks (
+      id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      content       text      NOT NULL,
+      meta          jsonb,
+      updated_at    timestamptz NOT NULL DEFAULT now(),
+      content_hash  text      NOT NULL UNIQUE
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS kb_chunks_updated_at_idx ON kb_chunks (updated_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS kb_chunks_meta_gin_idx   ON kb_chunks USING GIN (meta)`);
+}
+
+// ---- admin kb endpoints
+app.get("/admin/kb/count", auth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "no_pool" });
+  const r = await pool.query("select count(*)::int as n from kb_chunks");
+  res.json({ count: r.rows[0].n });
+});
+
+app.get("/admin/kb/list", auth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "no_pool" });
+  const limit = Math.min(parseInt(req.query.limit || "10", 10), 100);
+  const r = await pool.query(
+    `select id, content, meta, updated_at, content_hash
+     from kb_chunks
+     order by updated_at desc
+     limit $1`,
+    [limit]
+  );
+  res.json({ items: r.rows });
+});
+
+app.post("/admin/kb", auth, async (req, res) => {
+  if (!pool) return res.status(500).json({ error: "no_pool" });
+  const content = (req.body?.content || "").toString();
+  const meta = req.body?.meta ?? {};
+  if (!content.trim()) return res.status(400).json({ error: "content_required" });
+  const hash = crypto.createHash("sha256").update(content, "utf8").digest("hex");
+  try {
+    const r = await pool.query(
+      `insert into kb_chunks (content, meta, content_hash)
+       values ($1, $2, $3)
+       on conflict (content_hash) do nothing
+       returning id, content_hash`,
+      [content, meta, hash]
+    );
+    if (r.rows.length) return res.json(r.rows[0]);
+    res.json({ duplicate: true, content_hash: hash });
+  } catch (e) {
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// ---- listen + init
+app.listen(PORT, async () => {
+  try { await ensureSchema(); } catch {}
+});
