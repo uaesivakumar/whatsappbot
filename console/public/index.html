@@ -82,7 +82,12 @@
 
       <!-- Add Chunk -->
       <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
-        <h2 class="text-lg font-semibold mb-3">Add Knowledge Chunk</h2>
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">Add Knowledge Chunk</h2>
+          <div class="flex gap-2">
+            <button id="embedMissing" class="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 text-sm">Embed Missing</button>
+          </div>
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label for="content" class="block text-sm font-medium">Content</label>
@@ -103,11 +108,20 @@
         </div>
       </section>
 
+      <!-- Semantic Search -->
+      <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-3">Semantic Search (pgvector)</h2>
+        <div class="flex items-center gap-2 mb-3">
+          <input id="qSemantic" type="text" placeholder="Type a question or keywords…"
+                 class="rounded-xl border border-gray-300 px-3 py-2 text-sm w-full" />
+          <button id="doSemantic" class="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-sm">Search</button>
+        </div>
+        <div id="semanticStatus" class="text-xs text-gray-500 mb-2"></div>
+        <div id="semanticResults" class="space-y-3"></div>
+      </section>
+
       <!-- List -->
       <section class="bg-white rounded-2xl shadow p-4 md:p-6">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Recent Chunks</h2>
-        </div>
         <div id="listWrap" class="overflow-x-auto">
           <table class="min-w-full text-sm">
             <thead>
@@ -132,9 +146,7 @@
   </div>
 
   <script>
-    window.__ADMIN_CONSOLE__ = {
-      baseUrl: window.location.origin
-    };
+    window.__ADMIN_CONSOLE__ = { baseUrl: window.location.origin };
   </script>
   <script src="./app.js"></script>
 </body>
