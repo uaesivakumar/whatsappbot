@@ -12,35 +12,35 @@
       <div class="flex items-start justify-between gap-3">
         <div>
           <h1 class="text-2xl md:text-3xl font-bold">Admin Console — Knowledge Base</h1>
-          <p class="text-sm text-gray-600 mt-1">
-            Backend:
-            <span id="backend-url" class="font-mono"></span>
-          </p>
+          <p class="text-sm text-gray-600 mt-1">Backend: <span id="backend-url" class="font-mono"></span></p>
         </div>
         <div class="mt-1">
-          <span id="diag-badge"
-                class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-gray-200 text-gray-700">
+          <span id="diag-badge" class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-gray-200 text-gray-700">
             Checking DB…
           </span>
         </div>
       </div>
+
+      <!-- Tabs -->
+      <div class="mt-4 flex gap-2">
+        <button data-tab="tab-kb" class="tabbtn rounded-xl bg-indigo-600 text-white px-3 py-2 text-sm">KB</button>
+        <button data-tab="tab-bot" class="tabbtn rounded-xl bg-gray-200 text-gray-900 px-3 py-2 text-sm">Bot Preview</button>
+        <button data-tab="tab-msg" class="tabbtn rounded-xl bg-gray-200 text-gray-900 px-3 py-2 text-sm">Messages</button>
+        <button data-tab="tab-cust" class="tabbtn rounded-xl bg-gray-200 text-gray-900 px-3 py-2 text-sm">Customers</button>
+      </div>
     </header>
 
-    <!-- Login Card -->
+    <!-- Sign in -->
     <section id="loginCard" class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
       <h2 class="text-lg font-semibold mb-3">Sign in</h2>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
         <div>
           <label for="username" class="block text-sm font-medium">Username</label>
-          <input id="username" type="text"
-                 class="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                 placeholder="admin" autocomplete="username" />
+          <input id="username" type="text" class="mt-1 w-full rounded-xl border px-3 py-2" placeholder="admin" />
         </div>
         <div>
           <label for="password" class="block text-sm font-medium">Password</label>
-          <input id="password" type="password"
-                 class="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                 placeholder="••••••••" autocomplete="current-password" />
+          <input id="password" type="password" class="mt-1 w-full rounded-xl border px-3 py-2" placeholder="••••••••" />
         </div>
         <div class="flex gap-2">
           <button id="loginBtn" class="flex-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 font-medium">Login</button>
@@ -50,104 +50,212 @@
       <p id="loginStatus" class="mt-3 text-sm text-gray-600"></p>
     </section>
 
-    <!-- App (hidden until authed) -->
     <section id="appWrap" class="hidden">
-      <!-- Actions / Filters -->
-      <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <h2 class="text-lg font-semibold">KB Actions</h2>
-          <div class="flex items-center gap-2">
-            <input id="search" type="text" placeholder="Search content or meta…"
-                   class="rounded-xl border border-gray-300 px-3 py-2 text-sm w-64" />
-            <button id="refreshCount" class="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-sm">Refresh Count</button>
-            <button id="refreshList" class="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-sm">Refresh List</button>
+      <!-- ============ KB TAB ============ -->
+      <section id="tab-kb" class="tab">
+        <!-- Actions -->
+        <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-lg font-semibold">KB Actions</h2>
+            <div class="flex items-center gap-2">
+              <input id="search" type="text" placeholder="Search content or meta…" class="rounded-xl border px-3 py-2 text-sm w-64" />
+              <button id="refreshCount" class="rounded-xl bg-slate-100 px-3 py-2 text-sm">Refresh Count</button>
+              <button id="refreshList" class="rounded-xl bg-slate-100 px-3 py-2 text-sm">Refresh List</button>
+            </div>
           </div>
-        </div>
-        <div class="mt-3 text-sm flex items-center gap-4">
-          <div>
-            <span class="text-gray-600">Total Chunks:</span>
-            <span id="kbCount" class="font-semibold">—</span>
+          <div class="mt-3 text-sm flex items-center gap-4">
+            <div><span class="text-gray-600">Total Chunks:</span> <span id="kbCount" class="font-semibold">—</span></div>
+            <div class="flex items-center gap-2">
+              <label class="text-sm text-gray-600">Limit</label>
+              <input id="limit" type="number" min="1" max="200" value="10" class="w-20 rounded-lg border px-2 py-1 text-sm">
+              <label class="text-sm text-gray-600">Offset</label>
+              <input id="offset" type="number" min="0" step="10" value="0" class="w-24 rounded-lg border px-2 py-1 text-sm">
+              <button id="applyPage" class="rounded-xl bg-slate-100 px-3 py-2 text-sm">Apply</button>
+            </div>
           </div>
-          <div class="flex items-center gap-2">
-            <label for="limit" class="text-sm text-gray-600">Limit</label>
-            <input id="limit" type="number" min="1" max="200" value="10"
-                   class="w-20 rounded-lg border border-gray-300 px-2 py-1 text-sm">
-            <label for="offset" class="text-sm text-gray-600">Offset</label>
-            <input id="offset" type="number" min="0" step="10" value="0"
-                   class="w-24 rounded-lg border border-gray-300 px-2 py-1 text-sm">
-            <button id="applyPage" class="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-sm">Apply</button>
+        </section>
+
+        <!-- Add Chunk -->
+        <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">Add Knowledge Chunk</h2>
+            <div class="flex gap-2">
+              <button id="embedMissing" class="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 text-sm">Embed Missing</button>
+            </div>
           </div>
-        </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium">Content</label>
+              <textarea id="content" rows="6" class="mt-1 w-full rounded-xl border px-3 py-2" placeholder="Write KB content here…"></textarea>
+            </div>
+            <div class="grid grid-cols-1 gap-3">
+              <div>
+                <label class="block text-sm font-medium">Source</label>
+                <select id="metaSrc" class="mt-1 w-full rounded-xl border px-3 py-2">
+                  <option value="intranet">intranet</option>
+                  <option value="personal">personal</option>
+                  <option value="enbd-website">enbd-website</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-sm font-medium">Product</label>
+                <input id="metaProduct" type="text" placeholder="e.g., accounts, cards, loans" class="mt-1 w-full rounded-xl border px-3 py-2" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium">Tags</label>
+                <select id="metaTags" multiple class="mt-1 w-full rounded-xl border px-3 py-2 h-28">
+                  <option value="faq">faq</option>
+                  <option value="policy">policy</option>
+                  <option value="fees">fees</option>
+                  <option value="accounts">accounts</option>
+                  <option value="cards">cards</option>
+                  <option value="loans">loans</option>
+                  <option value="kyc">kyc</option>
+                  <option value="limits">limits</option>
+                  <option value="support">support</option>
+                </select>
+                <p class="text-xs text-gray-500 mt-1">Hold Cmd/Ctrl (or Shift) to select multiple.</p>
+              </div>
+            </div>
+          </div>
+          <div class="mt-3 flex gap-2">
+            <button id="addChunk" class="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 font-medium">Add</button>
+            <span id="addStatus" class="text-sm text-gray-600"></span>
+          </div>
+        </section>
+
+        <!-- Semantic (still useful for KB QA) -->
+        <section class="bg-white rounded-2xl shadow p-4 md:p-6">
+          <h2 class="text-lg font-semibold mb-3">Semantic Search (pgvector)</h2>
+          <div class="flex items-center gap-2 mb-3">
+            <input id="qSemantic" type="text" placeholder="Type a question or keywords…" class="rounded-xl border px-3 py-2 text-sm w-full" />
+            <button id="doSemantic" class="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-sm">Search</button>
+          </div>
+          <div id="semanticStatus" class="text-xs text-gray-500 mb-2"></div>
+          <div id="semanticResults" class="space-y-3"></div>
+        </section>
+
+        <!-- KB List -->
+        <section class="bg-white rounded-2xl shadow p-4 md:p-6 mt-6">
+          <div id="listWrap" class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+              <thead>
+                <tr class="text-left text-gray-600 border-b">
+                  <th class="py-2 pr-4">ID</th>
+                  <th class="py-2 pr-4">Excerpt</th>
+                  <th class="py-2 pr-4">Meta</th>
+                  <th class="py-2 pr-4">Updated</th>
+                  <th class="py-2 pr-4">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="kbTableBody"></tbody>
+            </table>
+          </div>
+          <div id="listStatus" class="text-xs text-gray-500 mt-2"></div>
+        </section>
       </section>
 
-      <!-- Add Chunk -->
-      <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold">Add Knowledge Chunk</h2>
-          <div class="flex gap-2">
-            <button id="embedMissing" class="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 text-sm">Embed Missing</button>
+      <!-- ============ BOT PREVIEW TAB ============ -->
+      <section id="tab-bot" class="tab hidden">
+        <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
+          <h2 class="text-lg font-semibold mb-3">Bot Preview (RAG)</h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div class="md:col-span-2">
+              <label class="block text-sm font-medium">User Question</label>
+              <input id="botQ" type="text" class="mt-1 w-full rounded-xl border px-3 py-2" placeholder="Type a user question…" />
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-sm font-medium">Customer Phone</label>
+                <input id="botPhone" type="text" class="mt-1 w-full rounded-xl border px-3 py-2" placeholder="+971..." />
+              </div>
+              <div>
+                <label class="block text-sm font-medium">Name (optional)</label>
+                <input id="botName" type="text" class="mt-1 w-full rounded-xl border px-3 py-2" placeholder="Saeed" />
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label for="content" class="block text-sm font-medium">Content</label>
-            <textarea id="content" rows="6"
-                      class="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder="Write KB content here…"></textarea>
+          <div class="mt-3 flex items-center gap-3">
+            <label class="flex items-center gap-2 text-sm">
+              <input id="botGenerate" type="checkbox" class="w-4 h-4" checked />
+              Generate answer like Siva
+            </label>
+            <button id="botAsk" class="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-sm">Ask</button>
           </div>
-          <div>
-            <label for="meta" class="block text-sm font-medium">Meta (JSON)</label>
-            <textarea id="meta" rows="6"
-                      class="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder='{"src":"admin-console","tags":["faq","policy"]}'></textarea>
-          </div>
-        </div>
-        <div class="mt-3 flex gap-2">
-          <button id="addChunk" class="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 font-medium">Add</button>
-          <span id="addStatus" class="text-sm text-gray-600"></span>
-        </div>
+        </section>
+
+        <section class="bg-white rounded-2xl shadow p-4 md:p-6">
+          <div id="botStatus" class="text-xs text-gray-500 mb-2"></div>
+          <div id="botIntent" class="text-sm text-gray-700 mb-3"></div>
+          <div id="botAnswer" class="whitespace-pre-wrap text-base mb-4"></div>
+          <div id="botContexts" class="space-y-3"></div>
+        </section>
       </section>
 
-      <!-- Semantic Search -->
-      <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
-        <h2 class="text-lg font-semibold mb-3">Semantic Search (pgvector)</h2>
-        <div class="flex items-center gap-2 mb-3">
-          <input id="qSemantic" type="text" placeholder="Type a question or keywords…"
-                 class="rounded-xl border border-gray-300 px-3 py-2 text-sm w-full" />
-          <button id="doSemantic" class="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-sm">Search</button>
-        </div>
-        <div id="semanticStatus" class="text-xs text-gray-500 mb-2"></div>
-        <div id="semanticResults" class="space-y-3"></div>
+      <!-- ============ MESSAGES TAB ============ -->
+      <section id="tab-msg" class="tab hidden">
+        <section class="bg-white rounded-2xl shadow p-4 md:p-6">
+          <h2 class="text-lg font-semibold mb-3">Messages (Logs)</h2>
+          <div id="msgWrap" class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+              <thead>
+                <tr class="text-left text-gray-600 border-b">
+                  <th class="py-2 pr-4">Time</th>
+                  <th class="py-2 pr-4">Phone / Name</th>
+                  <th class="py-2 pr-4">Intent (confidence)</th>
+                  <th class="py-2 pr-4">Preview</th>
+                  <th class="py-2 pr-4">Link</th>
+                </tr>
+              </thead>
+              <tbody id="msgTableBody"></tbody>
+            </table>
+          </div>
+          <div id="msgStatus" class="text-xs text-gray-500 mt-2"></div>
+        </section>
       </section>
 
-      <!-- List -->
-      <section class="bg-white rounded-2xl shadow p-4 md:p-6">
-        <div id="listWrap" class="overflow-x-auto">
-          <table class="min-w-full text-sm">
-            <thead>
-              <tr class="text-left text-gray-600 border-b">
-                <th class="py-2 pr-4">ID</th>
-                <th class="py-2 pr-4">Excerpt</th>
-                <th class="py-2 pr-4">Meta</th>
-                <th class="py-2 pr-4">Updated</th>
-                <th class="py-2 pr-4">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="kbTableBody"></tbody>
-          </table>
-        </div>
-        <div id="listStatus" class="text-xs text-gray-500 mt-2"></div>
+      <!-- ============ CUSTOMERS TAB ============ -->
+      <section id="tab-cust" class="tab hidden">
+        <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
+          <h2 class="text-lg font-semibold mb-3">Add / Update Customer</h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input id="cPhone" class="rounded-xl border px-3 py-2" placeholder="Phone (unique)" />
+            <input id="cName" class="rounded-xl border px-3 py-2" placeholder="Name" />
+            <input id="cCompany" class="rounded-xl border px-3 py-2" placeholder="Company" />
+            <input id="cSalary" class="rounded-xl border px-3 py-2" placeholder="Salary" />
+            <input id="cNotes" class="rounded-xl border px-3 py-2 md:col-span-2" placeholder="Notes" />
+          </div>
+          <div class="mt-3">
+            <button id="saveCustomer" class="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-sm">Save</button>
+            <span id="custStatus" class="text-xs text-gray-600 ml-2"></span>
+          </div>
+        </section>
+
+        <section class="bg-white rounded-2xl shadow p-4 md:p-6">
+          <h2 class="text-lg font-semibold mb-3">Customers</h2>
+          <div id="custWrap" class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+              <thead>
+                <tr class="text-left text-gray-600 border-b">
+                  <th class="py-2 pr-4">Phone</th>
+                  <th class="py-2 pr-4">Name</th>
+                  <th class="py-2 pr-4">Company</th>
+                  <th class="py-2 pr-4">Salary</th>
+                  <th class="py-2 pr-4">Updated</th>
+                </tr>
+              </thead>
+              <tbody id="custTableBody"></tbody>
+            </table>
+          </div>
+          <div id="custListStatus" class="text-xs text-gray-500 mt-2"></div>
+        </section>
       </section>
     </section>
 
-    <footer class="py-6 text-xs text-gray-500 text-center">
-      © Admin Console — WhatsApp Bot MVP
-    </footer>
+    <footer class="py-6 text-xs text-gray-500 text-center">© Admin Console — WhatsApp Bot MVP</footer>
   </div>
 
-  <script>
-    window.__ADMIN_CONSOLE__ = { baseUrl: window.location.origin };
-  </script>
+  <script>window.__ADMIN_CONSOLE__={ baseUrl: window.location.origin };</script>
   <script src="./app.js"></script>
 </body>
 </html>
