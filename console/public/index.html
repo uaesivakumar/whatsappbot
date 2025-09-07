@@ -27,11 +27,12 @@ hr{border:none;height:1px;background:#eee;margin:20px 0}
   <div style="flex:1 1 280px">
     <label>Base URL</label>
     <input id="base" type="text" value="">
-    <div class="small">example: https://whatsappbot-7agd.onrender.com</div>
+    <div class="small">Example: https://whatsappbot-7agd.onrender.com</div>
   </div>
   <div style="flex:1 1 280px">
     <label>Admin Token</label>
-    <input id="token" type="text" placeholder="ADMIN_TOKEN">
+    <input id="token" type="text" placeholder="Bearer token">
+    <div class="small">Your ADMIN_TOKEN (not stored on server)</div>
   </div>
 </div>
 
@@ -55,32 +56,31 @@ hr{border:none;height:1px;background:#eee;margin:20px 0}
 
 <script>
 const $ = id => document.getElementById(id);
-function base(){ return ($("base").value || "").replace(/\/+$/,""); }
-function token(){ return $("token").value.trim(); }
-function auth(){ return { "Authorization": "Bearer " + token() }; }
-function jsonAuth(){ return { "Authorization": "Bearer " + token(), "Content-Type":"application/json" }; }
+function b(){ return ($("base").value || "").replace(/\/+$/,""); }
+function t(){ return $("token").value.trim(); }
+function hdr(){ return { "Authorization": "Bearer " + t(), "Content-Type": "application/json" }; }
 function show(x){ $("out").textContent = typeof x==="string" ? x : JSON.stringify(x,null,2); }
 
 async function ping(){
   try{
-    const r = await fetch(base()+"/__diag");
+    const r = await fetch(b()+"/__diag");
     const j = await r.json();
     $("status").textContent = j.db_ok ? "db:ok" : "db:fail";
   }catch(e){ $("status").textContent = "offline"; }
 }
 
 $("btn-diag").onclick = async ()=>{
-  const r = await fetch(base()+"/__diag");
+  const r = await fetch(b()+"/__diag");
   show(await r.json());
 };
 
 $("btn-count").onclick = async ()=>{
-  const r = await fetch(base()+"/admin/kb/count",{headers:auth()});
+  const r = await fetch(b()+"/admin/kb/count",{headers:{Authorization:"Bearer "+t()}});
   show(await r.json());
 };
 
 $("btn-list").onclick = async ()=>{
-  const r = await fetch(base()+"/admin/kb/list?limit=5",{headers:auth()});
+  const r = await fetch(b()+"/admin/kb/list?limit=5",{headers:{Authorization:"Bearer "+t()}});
   show(await r.json());
 };
 
@@ -90,14 +90,14 @@ $("btn-insert").onclick = async ()=>{
   let meta = {};
   const mv = $("meta").value.trim();
   try{ if(mv) meta = JSON.parse(mv); }catch(e){ show("meta must be JSON"); return; }
-  const r = await fetch(base()+"/admin/kb",{method:"POST", headers:jsonAuth(), body:JSON.stringify({content, meta})});
-  show(await r.json());
+  const r = await fetch(b()+"/admin/kb",{method:"POST", headers:hdr(), body:JSON.stringify({content, meta})});
+  const j = await r.json();
+  show(j);
 };
 
 (function init(){
-  $("base").value = window.location.origin;
-  try{ const stored = sessionStorage.getItem("ADMIN_TOKEN"); if(stored) $("token").value = stored; }catch{}
-  $("token").addEventListener("input",()=>{ try{ sessionStorage.setItem("ADMIN_TOKEN", $("token").value); }catch{} });
+  const loc = window.location.origin;
+  $("base").value = loc;
   ping();
 })();
 </script>
