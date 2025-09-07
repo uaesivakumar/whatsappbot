@@ -1,105 +1,153 @@
-<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin Console</title>
-<style>
-body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;margin:24px;max-width:900px}
-h1{font-size:20px;margin:0 0 12px}
-label{display:block;margin:12px 0 4px;font-weight:600}
-input,textarea,button,select{font:inherit}
-input[type=text],textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px}
-textarea{min-height:110px}
-.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-button{padding:10px 14px;border:1px solid #111;background:#111;color:#fff;border-radius:8px;cursor:pointer}
-button.secondary{background:#fff;color:#111}
-pre{background:#0b1020;color:#d8e1ff;padding:12px;border-radius:8px;white-space:pre-wrap;word-break:break-word}
-.small{font-size:12px;color:#666}
-hr{border:none;height:1px;background:#eee;margin:20px 0}
-.badge{padding:2px 6px;border:1px solid #ccc;border-radius:999px;font-size:12px}
-</style>
-</head>
-<body>
-<h1>Admin Console <span id="status" class="badge">checking…</span></h1>
+import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
+import dotenv from "dotenv";
+import pkg from "pg";
+import session from "express-session";
 
-<div class="row">
-  <div style="flex:1 1 280px">
-    <label>Base URL</label>
-    <input id="base" type="text" value="">
-    <div class="small">example: https://whatsappbot-7agd.onrender.com</div>
-  </div>
-  <div style="flex:1 1 280px">
-    <label>Admin Token</label>
-    <input id="token" type="text" placeholder="ADMIN_TOKEN">
-  </div>
-</div>
+dotenv.config();
+const { Pool } = pkg;
 
-<hr>
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-<div>
-  <label>New KB Content</label>
-  <textarea id="content" placeholder="Paste text…"></textarea>
-  <label>Meta (JSON)</label>
-  <input id="meta" type="text" value='{"src":"console"}'>
-  <div class="row" style="margin-top:10px">
-    <button id="btn-insert">Insert KB Row</button>
-    <button id="btn-count" class="secondary">Count</button>
-    <button id="btn-list" class="secondary">List 5</button>
-    <button id="btn-diag" class="secondary">__diag</button>
-  </div>
-</div>
+const app = express();
+const port = process.env.PORT || 10000;
 
-<hr>
-<pre id="out">Ready.</pre>
+// trust Render proxy so secure cookies work
+app.set("trust proxy", 1);
 
-<script>
-const $ = id => document.getElementById(id);
-function base(){ return ($("base").value || "").replace(/\/+$/,""); }
-function token(){ return $("token").value.trim(); }
-function auth(){ return { "Authorization": "Bearer " + token() }; }
-function jsonAuth(){ return { "Authorization": "Bearer " + token(), "Content-Type":"application/json" }; }
-function show(x){ $("out").textContent = typeof x==="string" ? x : JSON.stringify(x,null,2); }
+// ---- DB ----
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
-async function ping(){
-  try{
-    const r = await fetch(base()+"/__diag");
-    const j = await r.json();
-    $("status").textContent = j.db_ok ? "db:ok" : "db:fail";
-  }catch(e){ $("status").textContent = "offline"; }
+// ---- Middleware ----
+app.use(express.json());
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "change_this_secret",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: true,         // HTTPS on Render
+      httpOnly: true,
+      sameSite: "strict"
+    }
+  })
+);
+
+// ---- Health / Diag ----
+app.get("/health", (req, res) => {
+  res.json({ ok: true });
+});
+
+app.get("/__diag", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({ ok: true, db_ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, db_ok: false, error: e.message });
+  }
+});
+
+// ---- Auth ----
+app.post("/admin/login", (req, res) => {
+  const { username, password } = req.body || {};
+  if (username === process.env.ADMIN_USER && password === process.env.ADMIN_PASS) {
+    req.session.isAdmin = true;
+    return res.json({ ok: true });
+  }
+  res.status(401).json({ error: "invalid credentials" });
+});
+
+app.post("/admin/logout", (req, res) => {
+  req.session.destroy(() => res.json({ ok: true }));
+});
+
+function requireAdmin(req, res, next) {
+  if (req.session && req.session.isAdmin) return next();
+  res.status(401).json({ error: "unauthorized" });
 }
 
-$("btn-diag").onclick = async ()=>{
-  const r = await fetch(base()+"/__diag");
-  show(await r.json());
-};
+// ---- Schema init ----
+async function ensureSchema() {
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS kb_chunks (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      content TEXT NOT NULL,
+      meta JSONB,
+      embedding JSONB,
+      updated_at TIMESTAMPTZ DEFAULT now(),
+      content_hash TEXT UNIQUE
+    );
+  `);
+}
+ensureSchema().catch((e) => console.error("Schema init failed:", e));
 
-$("btn-count").onclick = async ()=>{
-  const r = await fetch(base()+"/admin/kb/count",{headers:auth()});
-  show(await r.json());
-};
+// ---- KB API (protected) ----
+app.get("/admin/kb/count", requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT COUNT(*) FROM kb_chunks");
+    res.json({ count: parseInt(rows[0].count, 10) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-$("btn-list").onclick = async ()=>{
-  const r = await fetch(base()+"/admin/kb/list?limit=5",{headers:auth()});
-  show(await r.json());
-};
+app.get("/admin/kb/list", requireAdmin, async (req, res) => {
+  const limit = Math.max(1, Math.min(200, parseInt(req.query.limit || "20", 10)));
+  try {
+    const { rows } = await pool.query(
+      "SELECT * FROM kb_chunks ORDER BY updated_at DESC LIMIT $1",
+      [limit]
+    );
+    res.json({ rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-$("btn-insert").onclick = async ()=>{
-  const content = $("content").value.trim();
-  if(!content){ show("content required"); return; }
-  let meta = {};
-  const mv = $("meta").value.trim();
-  try{ if(mv) meta = JSON.parse(mv); }catch(e){ show("meta must be JSON"); return; }
-  const r = await fetch(base()+"/admin/kb",{method:"POST", headers:jsonAuth(), body:JSON.stringify({content, meta})});
-  show(await r.json());
-};
+app.post("/admin/kb", requireAdmin, async (req, res) => {
+  const { content, meta } = req.body || {};
+  if (!content) return res.status(400).json({ error: "content required" });
+  const crypto = await import("crypto");
+  const hash = crypto.createHash("sha256").update(content).digest("hex");
+  try {
+    const result = await pool.query(
+      `INSERT INTO kb_chunks (content, meta, content_hash)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (content_hash) DO UPDATE
+         SET updated_at = now()
+       RETURNING *`,
+      [content, meta || {}, hash]
+    );
+    res.json(result.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-(function init(){
-  $("base").value = window.location.origin;
-  try{ const stored = sessionStorage.getItem("ADMIN_TOKEN"); if(stored) $("token").value = stored; }catch{}
-  $("token").addEventListener("input",()=>{ try{ sessionStorage.setItem("ADMIN_TOKEN", $("token").value); }catch{} });
-  ping();
-})();
-</script>
-</body>
-</html>
+// ---- Static: root site ----
+app.use(express.static(path.join(__dirname, "public")));
+
+// ---- Static: /console (assets) ----
+const consoleDir = path.join(__dirname, "console/public");
+app.use("/console", express.static(consoleDir));
+
+// ---- Explicit index for /console (no trailing slash) ----
+app.get("/console", (req, res) => {
+  res.sendFile(path.join(consoleDir, "index.html"));
+});
+
+// ---- 404 (optional) ----
+app.use((req, res) => {
+  res.status(404).send("Not found");
+});
+
+// ---- Start ----
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
