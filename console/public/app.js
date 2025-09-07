@@ -39,7 +39,7 @@
     kbTableBody: qs("#kbTableBody"),
     listStatus: qs("#listStatus"),
 
-    // Semantic (KB QA)
+    // Semantic
     qSemantic: qs("#qSemantic"),
     doSemantic: qs("#doSemantic"),
     semanticStatus: qs("#semanticStatus"),
@@ -70,30 +70,55 @@
     custStatus: qs("#custStatus"),
     custTableBody: qs("#custTableBody"),
     custListStatus: qs("#custListStatus"),
+
+    // Settings
+    setPersona: qs("#setPersona"),
+    setIdentityOn: qs("#setIdentityOn"),
+    setIdentity: qs("#setIdentity"),
+    setHandoff: qs("#setHandoff"),
+    setPrompt: qs("#setPrompt"),
+    saveSettings: qs("#saveSettings"),
+    settingsStatus: qs("#settingsStatus"),
   };
+
   els.backendUrl.textContent = baseUrl;
 
-  // -------- utilities
-  const handleResp = async (r) => { const t = await r.text(); try { return JSON.parse(t); } catch { return t; } };
+  // ---------- utils ----------
+  const handleResp = async (r) => {
+    const t = await r.text();
+    try { return JSON.parse(t); } catch { return t; }
+  };
   const setBadge = (ok) => {
     if (ok) {
       els.diagBadge.textContent = "DB OK";
-      els.diagBadge.className = "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-green-100 text-green-800 border border-green-200";
+      els.diagBadge.className =
+        "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-green-100 text-green-800 border border-green-200";
     } else {
       els.diagBadge.textContent = "DB Error";
-      els.diagBadge.className = "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-red-100 text-red-800 border border-red-200";
+      els.diagBadge.className =
+        "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-red-100 text-red-800 border border-red-200";
     }
   };
   const setAuthedUI = (on) => {
-    if (on) { els.appWrap.classList.remove("hidden"); els.logoutBtn.classList.remove("hidden"); els.loginStatus.textContent = "Signed in ✓"; }
-    else { els.appWrap.classList.add("hidden"); els.logoutBtn.classList.add("hidden"); els.loginStatus.textContent = ""; }
+    if (on) {
+      els.appWrap.classList.remove("hidden");
+      els.logoutBtn.classList.remove("hidden");
+      els.loginStatus.textContent = "Signed in ✓";
+    } else {
+      els.appWrap.classList.add("hidden");
+      els.logoutBtn.classList.add("hidden");
+      els.loginStatus.textContent = "";
+    }
   };
+  const toStr = (v) => (v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 
-  // -------- tabs
+  // ---------- tabs ----------
   els.tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
-      els.tabBtns.forEach((b) => b.classList.replace("bg-indigo-600", "bg-gray-200"));
-      els.tabBtns.forEach((b) => b.classList.replace("text-white", "text-gray-900"));
+      els.tabBtns.forEach((b) => {
+        b.classList.replace("bg-indigo-600", "bg-gray-200");
+        b.classList.replace("text-white", "text-gray-900");
+      });
       btn.classList.replace("bg-gray-200", "bg-indigo-600");
       btn.classList.replace("text-gray-900", "text-white");
       const id = btn.getAttribute("data-tab");
@@ -101,10 +126,11 @@
       qs(`#${id}`).classList.remove("hidden");
       if (id === "tab-msg") loadMessages();
       if (id === "tab-cust") loadCustomers();
+      if (id === "tab-settings") loadSettings();
     });
   });
 
-  // -------- health/auth
+  // ---------- health / auth ----------
   const checkDiag = async () => {
     try {
       const r = await fetch(`${baseUrl}/__diag`, { credentials: "include" });
@@ -124,7 +150,26 @@
     } catch { setAuthedUI(false); return false; }
   };
 
-  // -------- KB actions
+  els.loginBtn.addEventListener("click", async () => {
+    els.loginStatus.textContent = "Signing in…";
+    const r = await fetch(`${baseUrl}/admin/login`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: els.username.value.trim(), password: els.password.value.trim() })
+    });
+    const d = await handleResp(r);
+    if (!r.ok) { els.loginStatus.textContent = `Login failed: ${toStr(d)}`; setAuthedUI(false); return; }
+    els.loginStatus.textContent = "Signed in ✓"; setAuthedUI(true);
+    await refreshCount(); await refreshList();
+  });
+
+  els.logoutBtn.addEventListener("click", async () => {
+    els.loginStatus.textContent = "Signing out…";
+    try { await fetch(`${baseUrl}/admin/logout`, { method: "POST", credentials: "include" }); } catch {}
+    setAuthedUI(false); els.loginStatus.textContent = "Signed out.";
+  });
+
+  // ---------- KB actions ----------
   const buildQS = () => {
     const p = new URLSearchParams();
     p.set("limit", String(Math.max(1, Math.min(200, parseInt(els.limit.value || "10", 10)))));
@@ -148,7 +193,6 @@
       els.kbTableBody.innerHTML = `<tr><td colspan="5" class="py-3 text-gray-500">No rows.</td></tr>`;
       return;
     }
-    const toStr = (v) => (v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
     for (const row of rows) {
       const tr = document.createElement("tr");
       tr.className = "border-b align-top";
@@ -205,7 +249,7 @@
         body: JSON.stringify({ content, meta })
       });
       const d = await handleResp(r);
-      if (!r.ok) { els.addStatus.textContent = `Add error: ${JSON.stringify(d)}`; return; }
+      if (!r.ok) { els.addStatus.textContent = `Add error: ${toStr(d)}`; return; }
       els.addStatus.textContent = "Added ✓";
       els.content.value = ""; els.metaProduct.value = ""; [...els.metaTags.options].forEach(o=>o.selected=false);
       await refreshCount(); await refreshList();
@@ -226,9 +270,13 @@
       const newContent = contentCell.querySelector("textarea").value.trim();
       let newMeta; try { newMeta = JSON.parse(metaCell.querySelector("textarea").value.trim() || "{}"); }
       catch (e) { alert(`Meta JSON error: ${e.message}`); return; }
-      const r = await fetch(`${baseUrl}/admin/kb/${id}`, { method:"PUT", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ content:newContent, meta:newMeta }) });
+      const r = await fetch(`${baseUrl}/admin/kb/${id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: newContent, meta: newMeta })
+      });
       const d = await handleResp(r);
-      if (!r.ok) { alert(`Update failed: ${JSON.stringify(d)}`); return; }
+      if (!r.ok) { alert(`Update failed: ${toStr(d)}`); return; }
       await refreshList();
     });
     actionsCell.querySelector(".cancelBtn").addEventListener("click", refreshList);
@@ -238,31 +286,35 @@
     if (!confirm("Delete this chunk?")) return;
     const r = await fetch(`${baseUrl}/admin/kb/${id}`, { method:"DELETE", credentials:"include" });
     const d = await handleResp(r);
-    if (!r.ok) alert(`Delete failed: ${JSON.stringify(d)}`); else { await refreshCount(); await refreshList(); }
+    if (!r.ok) alert(`Delete failed: ${toStr(d)}`); else { await refreshCount(); await refreshList(); }
   };
 
   const doEmbedOne = async (id) => {
     const r = await fetch(`${baseUrl}/admin/kb/embed/${id}`, { method:"POST", credentials:"include" });
     const d = await handleResp(r);
-    if (!r.ok) alert(`Embed failed: ${JSON.stringify(d)}`); else els.listStatus.textContent = `Embedded ${id}`;
+    if (!r.ok) alert(`Embed failed: ${toStr(d)}`); else els.listStatus.textContent = `Embedded ${id}`;
   };
 
   const doEmbedMissing = async () => {
     els.addStatus.textContent = "Embedding missing…";
     const r = await fetch(`${baseUrl}/admin/kb/embed/missing?limit=10`, { method:"POST", credentials:"include" });
     const d = await handleResp(r);
-    els.addStatus.textContent = r.ok ? `Embedded ${d.updated_count} item(s).` : `Error: ${JSON.stringify(d)}`;
+    els.addStatus.textContent = r.ok ? `Embedded ${d.updated_count} item(s).` : `Error: ${toStr(d)}`;
     await refreshList();
   };
 
-  // -------- Semantic QA (KB)
+  // ---------- Semantic search ----------
   const doSemantic = async () => {
     const q = (els.qSemantic.value || "").trim();
     if (!q) { els.semanticStatus.textContent = "Enter a query."; return; }
     els.semanticStatus.textContent = "Searching…"; els.semanticResults.innerHTML = "";
-    const r = await fetch(`${baseUrl}/admin/kb/search`, { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ query:q, k:6 }) });
+    const r = await fetch(`${baseUrl}/admin/kb/search`, {
+      method:"POST", credentials:"include",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ query:q, k:6 })
+    });
     const d = await handleResp(r);
-    if (!r.ok) { els.semanticStatus.textContent = `Error: ${JSON.stringify(d)}`; return; }
+    if (!r.ok) { els.semanticStatus.textContent = `Error: ${toStr(d)}`; return; }
     const rows = d?.results || [];
     els.semanticResults.innerHTML = rows.map(row => `
       <div class="rounded-xl border p-4">
@@ -273,7 +325,7 @@
     els.semanticStatus.textContent = `Found ${rows.length} result(s).`;
   };
 
-  // -------- Bot Preview (RAG)
+  // ---------- Bot preview ----------
   const botAsk = async () => {
     const text = (els.botQ.value || "").trim();
     if (!text) { els.botStatus.textContent = "Enter a user question."; return; }
@@ -284,9 +336,13 @@
       generate: Boolean(els.botGenerate.checked),
       customer: { phone: (els.botPhone.value || "").trim(), name: (els.botName.value || "").trim() || undefined }
     };
-    const r = await fetch(`${baseUrl}/rag/query`, { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+    const r = await fetch(`${baseUrl}/rag/query`, {
+      method:"POST", credentials:"include",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
     const d = await handleResp(r);
-    if (!r.ok) { els.botStatus.textContent = `Error: ${JSON.stringify(d)}`; return; }
+    if (!r.ok) { els.botStatus.textContent = `Error: ${toStr(d)}`; return; }
     els.botStatus.textContent = `Saved message: ${d.message_id}`;
     els.botIntent.innerHTML = `<span class="text-sm">Intent: <b>${d.intent}</b> · Confidence: <b>${d.intent_confidence_pct}%</b></span>`;
     els.botAnswer.textContent = d.answer || "(No answer generated — uncheck 'Generate answer'?)";
@@ -297,12 +353,12 @@
       </div>`).join("");
   };
 
-  // -------- Messages list
+  // ---------- Messages ----------
   const loadMessages = async () => {
     els.msgStatus.textContent = "Loading…"; els.msgTableBody.innerHTML = "";
     const r = await fetch(`${baseUrl}/admin/messages?limit=50`, { credentials:"include" });
     const d = await handleResp(r);
-    if (!r.ok) { els.msgStatus.textContent = `Error: ${JSON.stringify(d)}`; return; }
+    if (!r.ok) { els.msgStatus.textContent = `Error: ${toStr(d)}`; return; }
     const rows = d?.rows || [];
     els.msgTableBody.innerHTML = rows.map(row => `
       <tr class="border-b">
@@ -315,7 +371,7 @@
     els.msgStatus.textContent = `Loaded ${rows.length} message(s).`;
   };
 
-  // -------- Customers
+  // ---------- Customers ----------
   const loadCustomers = async () => {
     els.custListStatus.textContent = "Loading…"; els.custTableBody.innerHTML = "";
     const r = await fetch(`${baseUrl}/admin/customers?limit=100`, { credentials:"include" });
@@ -343,39 +399,75 @@
       meta: {}
     };
     if (!body.phone) { els.custStatus.textContent = "Phone is required."; return; }
-    const r = await fetch(`${baseUrl}/admin/customers`, { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+    const r = await fetch(`${baseUrl}/admin/customers`, {
+      method:"POST", credentials:"include",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
     const d = await handleResp(r);
-    els.custStatus.textContent = r.ok ? "Saved ✓" : `Error: ${JSON.stringify(d)}`;
+    els.custStatus.textContent = r.ok ? "Saved ✓" : `Error: ${toStr(d)}`;
     if (r.ok) loadCustomers();
   };
 
-  // -------- auth events
-  els.loginBtn.addEventListener("click", async () => {
-    els.loginStatus.textContent = "Signing in…";
-    const r = await fetch(`${baseUrl}/admin/login`, { method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ username: els.username.value.trim(), password: els.password.value.trim() }) });
-    const d = await handleResp(r);
-    if (!r.ok) { els.loginStatus.textContent = `Login failed: ${JSON.stringify(d)}`; setAuthedUI(false); return; }
-    els.loginStatus.textContent = "Signed in ✓"; setAuthedUI(true); await refreshCount(); await refreshList();
-  });
-  els.logoutBtn.addEventListener("click", async () => {
-    els.loginStatus.textContent = "Signing out…";
-    try { await fetch(`${baseUrl}/admin/logout`, { method:"POST", credentials:"include" }); } catch {}
-    setAuthedUI(false); els.loginStatus.textContent = "Signed out.";
-  });
+  // ---------- Settings ----------
+  const loadSettings = async () => {
+    els.settingsStatus.textContent = "Loading…";
+    try {
+      const r = await fetch(`${baseUrl}/admin/settings`, { credentials:"include" });
+      const cfg = await handleResp(r);
+      if (!r.ok) { els.settingsStatus.textContent = `Error: ${toStr(cfg)}`; return; }
+      els.setPersona.value = cfg.persona_name || "Siva";
+      els.setIdentityOn.checked = Boolean(cfg.include_identity_each_reply);
+      els.setIdentity.value = cfg.identity_line || "— Siva (Emirates NBD virtual assistant)";
+      els.setHandoff.checked = Boolean(cfg.allow_handoff);
+      els.setPrompt.value = cfg.system_prompt_override || "";
+      els.settingsStatus.textContent = "Loaded ✓";
+    } catch (e) {
+      els.settingsStatus.textContent = `Load exception: ${e.message}`;
+    }
+  };
 
-  // -------- UI events
+  const saveSettings = async () => {
+    els.settingsStatus.textContent = "Saving…";
+    const body = {
+      persona_name: (els.setPersona.value || "Siva").trim(),
+      include_identity_each_reply: Boolean(els.setIdentityOn.checked),
+      identity_line: (els.setIdentity.value || "").trim(),
+      allow_handoff: Boolean(els.setHandoff.checked),
+      system_prompt_override: (els.setPrompt.value || "").trim() || null
+    };
+    try {
+      const r = await fetch(`${baseUrl}/admin/settings`, {
+        method:"POST", credentials:"include",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify(body)
+      });
+      const d = await handleResp(r);
+      els.settingsStatus.textContent = r.ok ? "Saved ✓" : `Error: ${toStr(d)}`;
+    } catch (e) {
+      els.settingsStatus.textContent = `Save exception: ${e.message}`;
+    }
+  };
+
+  // ---------- events ----------
   els.refreshCount.addEventListener("click", refreshCount);
   els.refreshList.addEventListener("click", refreshList);
   els.applyPage.addEventListener("click", refreshList);
   els.search.addEventListener("keydown", (e)=>{ if (e.key==="Enter") { els.offset.value="0"; refreshCount(); refreshList(); }});
+
   els.addChunk.addEventListener("click", addChunk);
   els.embedMissing.addEventListener("click", doEmbedMissing);
+
   els.doSemantic.addEventListener("click", doSemantic);
   els.qSemantic.addEventListener("keydown", (e)=>{ if (e.key==="Enter") doSemantic(); });
+
   els.botAsk.addEventListener("click", botAsk);
+
   els.saveCustomer.addEventListener("click", saveCustomer);
 
-  // -------- init
+  els.saveSettings.addEventListener("click", saveSettings);
+
+  // ---------- init ----------
   (async () => {
     await checkDiag();
     await checkAuthed();
