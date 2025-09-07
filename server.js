@@ -5,6 +5,8 @@ import dotenv from "dotenv";
 import pkg from "pg";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
+import fs from "fs";
+import { promises as fsp } from "fs";
 
 dotenv.config();
 const { Pool } = pkg;
@@ -179,6 +181,25 @@ app.use("/console", express.static(consoleDir));
 // Explicit index for "/console" (no trailing slash)
 app.get("/console", (_req, res) => {
   res.sendFile(path.join(consoleDir, "index.html"));
+});
+
+// ---------- Debug helpers ----------
+app.get("/debug/console-path", (_req, res) => {
+  const indexPath = path.join(consoleDir, "index.html");
+  res.json({
+    consoleDir,
+    indexFile: indexPath,
+    exists: fs.existsSync(indexPath),
+  });
+});
+
+app.get("/debug/list-console-files", async (_req, res) => {
+  try {
+    const files = await fsp.readdir(consoleDir);
+    res.json({ consoleDir, files });
+  } catch (e) {
+    res.status(500).json({ consoleDir, error: String(e) });
+  }
 });
 
 // Optional: 404

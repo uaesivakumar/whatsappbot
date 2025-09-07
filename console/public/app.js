@@ -28,7 +28,6 @@
 
   els.backendUrl.textContent = baseUrl;
 
-  // --- helpers ---
   const handleResp = async (resp) => {
     const text = await resp.text();
     try { return JSON.parse(text); } catch { return text; }
@@ -44,19 +43,19 @@
     }
   };
 
-  // Simple ping to know if cookie/session is already valid
   const checkAuthed = async () => {
     try {
-      const r = await fetch(`${baseUrl}/admin/kb/count`, { method: "GET", credentials: "include" });
-      setAuthedUI(r.ok);
-      return r.ok;
+      const r = await fetch(`${baseUrl}/admin/me`, { credentials: "include" });
+      if (!r.ok) { setAuthedUI(false); return false; }
+      const data = await handleResp(r);
+      setAuthedUI(Boolean(data && data.authed));
+      return Boolean(data && data.authed);
     } catch {
       setAuthedUI(false);
       return false;
     }
   };
 
-  // --- diag ---
   const checkDiag = async () => {
     els.diag.textContent = "Checking __diag…";
     try {
@@ -68,7 +67,6 @@
     }
   };
 
-  // --- count/list ---
   const refreshCount = async () => {
     els.kbCount.textContent = "…";
     try {
@@ -135,7 +133,6 @@
     }
   };
 
-  // --- add ---
   const addChunk = async () => {
     els.addStatus.textContent = "Adding…";
     const content = (els.content.value || "").trim();
@@ -174,7 +171,6 @@
     }
   };
 
-  // --- login/logout ---
   const login = async () => {
     els.loginStatus.textContent = "Signing in…";
     try {
@@ -218,7 +214,6 @@
     els.listStatus.textContent = "";
   };
 
-  // --- events ---
   els.loginBtn.addEventListener("click", login);
   els.logoutBtn.addEventListener("click", logout);
 
@@ -228,10 +223,9 @@
   els.addChunk.addEventListener("click", addChunk);
   els.applyLimit.addEventListener("click", refreshList);
 
-  // --- init ---
   (async () => {
     await checkDiag();
-    const authed = await checkAuthed(); // if session already valid, unlock UI
+    const authed = await checkAuthed();
     if (authed) {
       await refreshCount();
       await refreshList();

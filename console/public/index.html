@@ -1,133 +1,122 @@
-// server.js
-import express from "express";
-import crypto from "crypto";
-import { Pool } from "pg";
-import path from "path";
-import { fileURLToPath } from "url";
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WhatsApp Bot Admin Console</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <div class="max-w-6xl mx-auto p-4 md:p-6">
+    <header class="mb-6">
+      <h1 class="text-2xl md:text-3xl font-bold">Admin Console — Knowledge Base</h1>
+      <p class="text-sm text-gray-600 mt-1">Backend: <span id="backend-url" class="font-mono"></span></p>
+      <div id="diag" class="text-xs text-gray-600 mt-1"></div>
+    </header>
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+    <!-- Login Card -->
+    <section id="loginCard" class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
+      <h2 class="text-lg font-semibold mb-3">Sign in</h2>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+        <div>
+          <label for="username" class="block text-sm font-medium">Username</label>
+          <input id="username" type="text"
+                 class="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                 placeholder="admin" autocomplete="username" />
+        </div>
+        <div>
+          <label for="password" class="block text-sm font-medium">Password</label>
+          <input id="password" type="password"
+                 class="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                 placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <div class="flex gap-2">
+          <button id="loginBtn" class="flex-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 font-medium">Login</button>
+          <button id="logoutBtn" class="flex-1 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-900 px-4 py-2 font-medium hidden">Logout</button>
+        </div>
+      </div>
+      <p id="loginStatus" class="mt-3 text-sm text-gray-600"></p>
+    </section>
 
-const app = express();
-app.use(express.json());
+    <!-- App (hidden until authed) -->
+    <section id="appWrap" class="hidden">
+      <!-- Actions -->
+      <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
+        <div class="flex flex-wrap gap-2 items-center justify-between">
+          <h2 class="text-lg font-semibold">KB Actions</h2>
+          <div class="flex gap-2">
+            <button id="refreshDiag" class="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-sm">Check __diag</button>
+            <button id="refreshCount" class="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-sm">Refresh Count</button>
+            <button id="refreshList" class="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-sm">Refresh List</button>
+          </div>
+        </div>
+        <div class="mt-3 text-sm">
+          <span class="text-gray-600">Total Chunks:</span>
+          <span id="kbCount" class="font-semibold">—</span>
+        </div>
+      </section>
 
-// ---- config
-const PORT = process.env.PORT || 10000;
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || process.env.ADMIN || "";
-const DB_URL = process.env.DATABASE_URL || process.env.SUPABASE_URL || "";
+      <!-- Add Chunk -->
+      <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-3">Add Knowledge Chunk</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label for="content" class="block text-sm font-medium">Content</label>
+            <textarea id="content" rows="6"
+                      class="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Write KB content here…"></textarea>
+          </div>
+          <div>
+            <label for="meta" class="block text-sm font-medium">Meta (JSON)</label>
+            <textarea id="meta" rows="6"
+                      class="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder='{"src":"admin-console","tags":["faq","policy"]}'></textarea>
+          </div>
+        </div>
+        <div class="mt-3 flex gap-2">
+          <button id="addChunk" class="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 font-medium">Add</button>
+          <span id="addStatus" class="text-sm text-gray-600"></span>
+        </div>
+      </section>
 
-// ---- db pool (TLS tolerated for poolers etc.)
-let pool = null;
-if (DB_URL) {
-  pool = new Pool({
-    connectionString: DB_URL,
-    ssl: { rejectUnauthorized: false },
-  });
-}
+      <!-- List -->
+      <section class="bg-white rounded-2xl shadow p-4 md:p-6">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">Recent Chunks</h2>
+          <div class="flex items-center gap-2">
+            <label for="limit" class="text-sm text-gray-600">Limit</label>
+            <input id="limit" type="number" min="1" max="200" value="10"
+                   class="w-20 rounded-lg border border-gray-300 px-2 py-1 text-sm">
+            <button id="applyLimit" class="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-sm">Apply</button>
+          </div>
+        </div>
+        <div id="listWrap" class="overflow-x-auto">
+          <table class="min-w-full text-sm">
+            <thead>
+              <tr class="text-left text-gray-600 border-b">
+                <th class="py-2 pr-4">ID</th>
+                <th class="py-2 pr-4">Excerpt</th>
+                <th class="py-2 pr-4">Meta</th>
+                <th class="py-2 pr-4">Updated</th>
+              </tr>
+            </thead>
+            <tbody id="kbTableBody"></tbody>
+          </table>
+        </div>
+        <div id="listStatus" class="text-xs text-gray-500 mt-2"></div>
+      </section>
+    </section>
 
-// ---- static sites
-// root site (your existing /public)
-app.use(express.static(path.join(__dirname, "public")));
+    <footer class="py-6 text-xs text-gray-500 text-center">
+      © Admin Console — WhatsApp Bot MVP
+    </footer>
+  </div>
 
-// admin console at /console (your console/public)
-app.use("/console", express.static(path.join(__dirname, "console", "public")));
-
-// ---- health & diag
-app.get("/health", (req, res) => {
-  res.json({ ok: true });
-});
-
-app.get("/__diag", async (req, res) => {
-  const diag = { ok: true, env: { has_port: !!PORT, has_db_url: !!DB_URL } };
-  if (!pool) return res.status(200).json({ ...diag, db_ok: false, error: "no_pool" });
-  try {
-    const c = await pool.connect();
-    try {
-      const host = c.connectionParameters.host;
-      const port = String(c.connectionParameters.port || 5432);
-      await c.query("select 1");
-      res.json({ ...diag, db_ok: true, db_host: host, db_port: port });
-    } finally {
-      c.release();
-    }
-  } catch (e) {
-    res.status(500).json({
-      ...diag,
-      db_ok: false,
-      db_host: pool.options?.host,
-      db_port: String(pool.options?.port || 5432),
-      error: e.message || String(e),
-    });
-  }
-});
-
-// ---- admin auth
-function auth(req, res, next) {
-  const h = req.headers.authorization || "";
-  const token = h.startsWith("Bearer ") ? h.slice(7) : "";
-  if (ADMIN_TOKEN && token === ADMIN_TOKEN) return next();
-  res.status(401).json({ error: "unauthorized" });
-}
-
-// ---- bootstrap schema
-async function ensureSchema() {
-  if (!pool) return;
-  await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS kb_chunks (
-      id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      content       text      NOT NULL,
-      meta          jsonb,
-      updated_at    timestamptz NOT NULL DEFAULT now(),
-      content_hash  text      NOT NULL UNIQUE
-    )
-  `);
-  await pool.query(`CREATE INDEX IF NOT EXISTS kb_chunks_updated_at_idx ON kb_chunks (updated_at DESC)`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS kb_chunks_meta_gin_idx   ON kb_chunks USING GIN (meta)`);
-}
-
-// ---- admin kb endpoints
-app.get("/admin/kb/count", auth, async (req, res) => {
-  if (!pool) return res.status(500).json({ error: "no_pool" });
-  const r = await pool.query("select count(*)::int as n from kb_chunks");
-  res.json({ count: r.rows[0].n });
-});
-
-app.get("/admin/kb/list", auth, async (req, res) => {
-  if (!pool) return res.status(500).json({ error: "no_pool" });
-  const limit = Math.min(parseInt(req.query.limit || "10", 10), 100);
-  const r = await pool.query(
-    `select id, content, meta, updated_at, content_hash
-     from kb_chunks
-     order by updated_at desc
-     limit $1`,
-    [limit]
-  );
-  res.json({ items: r.rows });
-});
-
-app.post("/admin/kb", auth, async (req, res) => {
-  if (!pool) return res.status(500).json({ error: "no_pool" });
-  const content = (req.body?.content || "").toString();
-  const meta = req.body?.meta ?? {};
-  if (!content.trim()) return res.status(400).json({ error: "content_required" });
-  const hash = crypto.createHash("sha256").update(content, "utf8").digest("hex");
-  try {
-    const r = await pool.query(
-      `insert into kb_chunks (content, meta, content_hash)
-       values ($1, $2, $3)
-       on conflict (content_hash) do nothing
-       returning id, content_hash`,
-      [content, meta, hash]
-    );
-    if (r.rows.length) return res.json(r.rows[0]);
-    res.json({ duplicate: true, content_hash: hash });
-  } catch (e) {
-    res.status(500).json({ error: e.message || String(e) });
-  }
-});
-
-// ---- listen + init
-app.listen(PORT, async () => {
-  try { await ensureSchema(); } catch {}
-});
+  <script>
+    window.__ADMIN_CONSOLE__ = {
+      baseUrl: window.location.origin
+    };
+  </script>
+  <script src="./app.js"></script>
+</body>
+</html>
