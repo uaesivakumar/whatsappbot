@@ -4,14 +4,15 @@ import dotenv from "dotenv";
 import { Pool } from "pg";
 
 dotenv.config();
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+const DB_URL = process.env.DATABASE_URL || process.env.SUPABASE_URL || "";
 
-const DB_URL = process.env.DATABASE_URL || "";
 let pool = null;
 if (DB_URL) {
   try {
@@ -33,9 +34,7 @@ async function ensureSchema() {
         content_hash text not null unique
       );
     `);
-  } catch (e) {
-    console.error("DB init warning:", e.message);
-  }
+  } catch (e) {}
 }
 ensureSchema();
 
@@ -46,16 +45,21 @@ app.get("/health", (req, res) => {
 app.get("/__diag", async (req, res) => {
   const diag = { ok: true, env: { has_port: !!process.env.PORT, has_db_url: !!DB_URL } };
   if (!pool) {
-    return res.json({ ...diag, db_ok: false, db_reason: "no_pool", db_url_hint: DB_URL ? new URL(DB_URL).host + ":" + (new URL(DB_URL).port || "") : null });
+    try {
+      const u = new URL(DB_URL);
+      return res.json({ ...diag, db_ok: false, db_reason: "no_pool", db_host: u.hostname, db_port: u.port || "5432" });
+    } catch {
+      return res.json({ ...diag, db_ok: false, db_reason: "no_pool", db_host: null, db_port: null });
+    }
   }
   try {
     const r = await pool.query("select 1 as ok");
     const u = new URL(DB_URL);
-    res.json({ ...diag, db_ok: r.rows?.[0]?.ok === 1, db_host: u.hostname, db_port: u.port });
+    res.json({ ...diag, db_ok: r.rows?.[0]?.ok === 1, db_host: u.hostname, db_port: u.port || "5432" });
   } catch (e) {
     try {
       const u = new URL(DB_URL);
-      res.status(500).json({ ...diag, db_ok: false, db_host: u.hostname, db_port: u.port, error: e.message });
+      res.status(500).json({ ...diag, db_ok: false, db_host: u.hostname, db_port: u.port || "5432", error: e.message });
     } catch {
       res.status(500).json({ ...diag, db_ok: false, error: e.message });
     }
@@ -78,7 +82,10 @@ app.get("/admin/kb/count", auth, async (req, res) => {
 app.get("/admin/kb/list", auth, async (req, res) => {
   if (!pool) return res.status(500).json({ error: "db_unavailable" });
   const limit = Math.max(1, Math.min(100, parseInt(req.query.limit || "10", 10)));
-  const r = await pool.query("select id, content, meta, updated_at, content_hash from kb_chunks order by updated_at desc limit $1", [limit]);
+  const r = await pool.query(
+    "select id, content, meta, updated_at, content_hash from kb_chunks order by updated_at desc limit $1",
+    [limit]
+  );
   res.json({ items: r.rows });
 });
 
@@ -95,7 +102,7 @@ app.post("/admin/kb", auth, async (req, res) => {
       "insert into kb_chunks (content, meta, content_hash) values ($1,$2,$3) on conflict (content_hash) do nothing returning id",
       [content, meta, hash]
     );
-    let id = ins.rows[0]?.id;
+    let id = ins.rows[0]?.id || null;
     if (!id) {
       const sel = await client.query("select id from kb_chunks where content_hash=$1", [hash]);
       id = sel.rows[0]?.id || null;
