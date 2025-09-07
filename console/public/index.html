@@ -52,18 +52,31 @@
 
     <!-- App (hidden until authed) -->
     <section id="appWrap" class="hidden">
-      <!-- Actions -->
+      <!-- Actions / Filters -->
       <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
-        <div class="flex flex-wrap gap-2 items-center justify-between">
+        <div class="flex flex-wrap items-center justify-between gap-3">
           <h2 class="text-lg font-semibold">KB Actions</h2>
-          <div class="flex gap-2">
+          <div class="flex items-center gap-2">
+            <input id="search" type="text" placeholder="Search content or meta…"
+                   class="rounded-xl border border-gray-300 px-3 py-2 text-sm w-64" />
             <button id="refreshCount" class="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-sm">Refresh Count</button>
             <button id="refreshList" class="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-sm">Refresh List</button>
           </div>
         </div>
-        <div class="mt-3 text-sm">
-          <span class="text-gray-600">Total Chunks:</span>
-          <span id="kbCount" class="font-semibold">—</span>
+        <div class="mt-3 text-sm flex items-center gap-4">
+          <div>
+            <span class="text-gray-600">Total Chunks:</span>
+            <span id="kbCount" class="font-semibold">—</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <label for="limit" class="text-sm text-gray-600">Limit</label>
+            <input id="limit" type="number" min="1" max="200" value="10"
+                   class="w-20 rounded-lg border border-gray-300 px-2 py-1 text-sm">
+            <label for="offset" class="text-sm text-gray-600">Offset</label>
+            <input id="offset" type="number" min="0" step="10" value="0"
+                   class="w-24 rounded-lg border border-gray-300 px-2 py-1 text-sm">
+            <button id="applyPage" class="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-sm">Apply</button>
+          </div>
         </div>
       </section>
 
@@ -94,12 +107,6 @@
       <section class="bg-white rounded-2xl shadow p-4 md:p-6">
         <div class="flex items-center justify-between mb-3">
           <h2 class="text-lg font-semibold">Recent Chunks</h2>
-          <div class="flex items-center gap-2">
-            <label for="limit" class="text-sm text-gray-600">Limit</label>
-            <input id="limit" type="number" min="1" max="200" value="10"
-                   class="w-20 rounded-lg border border-gray-300 px-2 py-1 text-sm">
-            <button id="applyLimit" class="rounded-xl bg-slate-100 hover:bg-slate-200 px-3 py-2 text-sm">Apply</button>
-          </div>
         </div>
         <div id="listWrap" class="overflow-x-auto">
           <table class="min-w-full text-sm">
@@ -109,6 +116,7 @@
                 <th class="py-2 pr-4">Excerpt</th>
                 <th class="py-2 pr-4">Meta</th>
                 <th class="py-2 pr-4">Updated</th>
+                <th class="py-2 pr-4">Actions</th>
               </tr>
             </thead>
             <tbody id="kbTableBody"></tbody>

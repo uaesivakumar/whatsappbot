@@ -100,7 +100,6 @@ function requireAdmin(req, res, next) {
 
 // ---------- Bootstrap schema ----------
 async function ensureSchema() {
-  // pgcrypto needed for gen_random_uuid()
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS kb_chunks (
@@ -121,32 +120,58 @@ async function ensureSchema() {
 }
 ensureSchema().catch((e) => console.error("ensureSchema error:", e));
 
+// ---------- Helpers ----------
+const normalizeSearch = (s) =>
+  (s || "")
+    .toString()
+    .trim();
+
+const searchSqlAndParams = (search, startIndex = 1) => {
+  const s = normalizeSearch(search);
+  if (!s) return { where: "", params: [] };
+  // ILIKE with %term% on both content and meta::text
+  return {
+    where: `WHERE (content ILIKE $${startIndex} OR meta::text ILIKE $${startIndex})`,
+    params: [`%${s}%`],
+  };
+};
+
 // ---------- KB API (protected) ----------
-app.get("/admin/kb/count", requireAdmin, async (_req, res) => {
+
+// Filtered count: /admin/kb/count?search=foo
+app.get("/admin/kb/count", requireAdmin, async (req, res) => {
   try {
-    const { rows } = await pool.query("SELECT COUNT(*) FROM kb_chunks");
+    const { where, params } = searchSqlAndParams(req.query.search, 1);
+    const q = `SELECT COUNT(*) FROM kb_chunks ${where}`;
+    const { rows } = await pool.query(q, params);
     res.json({ count: parseInt(rows[0].count, 10) });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
 });
 
+// List with pagination & search: /admin/kb/list?limit=20&offset=0&search=foo
 app.get("/admin/kb/list", requireAdmin, async (req, res) => {
   const limit = Math.max(1, Math.min(200, parseInt(req.query.limit || "20", 10)));
+  const offset = Math.max(0, parseInt(req.query.offset || "0", 10));
   try {
+    const { where, params } = searchSqlAndParams(req.query.search, 1);
     const q = `
       SELECT id, content, meta, updated_at, content_hash
       FROM kb_chunks
+      ${where}
       ORDER BY updated_at DESC
-      LIMIT $1
+      LIMIT $${params.length + 1}
+      OFFSET $${params.length + 2}
     `;
-    const { rows } = await pool.query(q, [limit]);
+    const { rows } = await pool.query(q, [...params, limit, offset]);
     res.json({ rows });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
 });
 
+// Create
 app.post("/admin/kb", requireAdmin, async (req, res) => {
   const content = (req.body?.content ?? "").toString();
   const meta = req.body?.meta ?? {};
@@ -165,6 +190,53 @@ app.post("/admin/kb", requireAdmin, async (req, res) => {
     `;
     const r = await pool.query(q, [content, meta, hash]);
     res.json(r.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// Update (edit)
+app.put("/admin/kb/:id", requireAdmin, async (req, res) => {
+  const id = (req.params.id || "").toString();
+  const content = (req.body?.content ?? "").toString();
+  const meta = req.body?.meta ?? {};
+  if (!id) return res.status(400).json({ error: "id_required" });
+  if (!content.trim()) return res.status(400).json({ error: "content_required" });
+
+  const { createHash } = await import("crypto");
+  const hash = createHash("sha256").update(content, "utf8").digest("hex");
+
+  try {
+    const q = `
+      UPDATE kb_chunks
+      SET content = $1,
+          meta = $2,
+          content_hash = $3,
+          updated_at = now()
+      WHERE id = $4
+      RETURNING *
+    `;
+    const r = await pool.query(q, [content, meta, hash, id]);
+    if (!r.rows.length) return res.status(404).json({ error: "not_found" });
+    res.json(r.rows[0]);
+  } catch (e) {
+    // Unique violation on content_hash → treat as upsert/duplicate notice
+    if (String(e.code) === "23505") {
+      return res.status(409).json({ error: "duplicate_content" });
+    }
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// Delete
+app.delete("/admin/kb/:id", requireAdmin, async (req, res) => {
+  const id = (req.params.id || "").toString();
+  if (!id) return res.status(400).json({ error: "id_required" });
+  try {
+    const q = `DELETE FROM kb_chunks WHERE id = $1 RETURNING id`;
+    const r = await pool.query(q, [id]);
+    if (!r.rows.length) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true, id });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
