@@ -90,13 +90,13 @@ function requireAdmin(req, res, next) {
   res.status(401).json({ error: "unauthorized" });
 }
 
-// ---------- Schema / Migration (handles old JSONB -> VECTOR) ----------
+// ---------- Schema / Migration (robust, idempotent) ----------
 async function ensureSchema() {
   // 1) Extensions
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
   await pool.query(`CREATE EXTENSION IF NOT EXISTS vector;`);
 
-  // 2) Table (initial shape – won't override existing)
+  // 2) Table (initial shape; won't override existing)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS kb_chunks (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -108,41 +108,50 @@ async function ensureSchema() {
     );
   `);
 
-  // 3) If table existed before with embedding as JSONB, fix it
-  const colInfo = await pool.query(`
-    SELECT data_type, udt_name
-    FROM information_schema.columns
-    WHERE table_name = 'kb_chunks' AND column_name = 'embedding'
+  // 3) Check actual column type using pg_attribute (more reliable than information_schema)
+  const typeRes = await pool.query(`
+    SELECT a.attname,
+           a.atttypid::regtype::text AS type_text
+    FROM pg_attribute a
+    JOIN pg_class c ON c.oid = a.attrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'kb_chunks'
+      AND n.nspname = 'public'
+      AND a.attname = 'embedding'
+      AND a.attnum > 0
+      AND NOT a.attisdropped
     LIMIT 1;
   `);
-  if (colInfo.rows.length) {
-    const { data_type, udt_name } = colInfo.rows[0];
-    const isVector = data_type === "USER-DEFINED" && udt_name === "vector";
-    if (!isVector) {
-      // Drop incompatible column and re-add as vector(1536)
-      await pool.query(`ALTER TABLE kb_chunks DROP COLUMN IF EXISTS embedding;`);
-      await pool.query(`ALTER TABLE kb_chunks ADD COLUMN embedding VECTOR(1536);`);
-    }
+
+  if (!typeRes.rows.length) {
+    // Column missing -> add if not exists (idempotent)
+    await pool.query(`ALTER TABLE public.kb_chunks ADD COLUMN IF NOT EXISTS embedding VECTOR(1536);`);
   } else {
-    // Column missing entirely
-    await pool.query(`ALTER TABLE kb_chunks ADD COLUMN embedding VECTOR(1536);`);
+    const typeText = typeRes.rows[0].type_text; // e.g., 'jsonb' or 'vector'
+    if (typeText !== "vector") {
+      // Wrong type -> drop then add as vector
+      await pool.query(`ALTER TABLE public.kb_chunks DROP COLUMN IF EXISTS embedding;`);
+      await pool.query(`ALTER TABLE public.kb_chunks ADD COLUMN embedding VECTOR(1536);`);
+    }
   }
 
   // 4) Helpful indexes
-  await pool.query(`CREATE INDEX IF NOT EXISTS kb_chunks_updated_at_idx ON kb_chunks (updated_at DESC);`);
-  await pool.query(`CREATE INDEX IF NOT EXISTS kb_chunks_meta_gin_idx ON kb_chunks USING GIN (meta);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS kb_chunks_updated_at_idx ON public.kb_chunks (updated_at DESC);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS kb_chunks_meta_gin_idx ON public.kb_chunks USING GIN (meta);`);
 
-  // 5) Vector index (works only if column is vector)
+  // 5) Vector index (create if missing)
   await pool.query(`
     DO $$
     BEGIN
       IF NOT EXISTS (
-        SELECT 1 FROM pg_class c
+        SELECT 1
+        FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE c.relkind = 'i'
           AND c.relname = 'kb_chunks_embedding_idx'
+          AND n.nspname = 'public'
       ) THEN
-        EXECUTE 'CREATE INDEX kb_chunks_embedding_idx ON kb_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);';
+        EXECUTE 'CREATE INDEX kb_chunks_embedding_idx ON public.kb_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);';
       END IF;
     END $$;
   `);
@@ -163,7 +172,7 @@ const searchSqlAndParams = (search, startIndex = 1) => {
 app.get("/admin/kb/count", requireAdmin, async (req, res) => {
   try {
     const { where, params } = searchSqlAndParams(req.query.search, 1);
-    const { rows } = await pool.query(`SELECT COUNT(*) FROM kb_chunks ${where}`, params);
+    const { rows } = await pool.query(`SELECT COUNT(*) FROM public.kb_chunks ${where}`, params);
     res.json({ count: parseInt(rows[0].count, 10) });
   } catch (e) {
     res.status(500).json({ error: String(e) });
@@ -177,7 +186,7 @@ app.get("/admin/kb/list", requireAdmin, async (req, res) => {
     const { where, params } = searchSqlAndParams(req.query.search, 1);
     const q = `
       SELECT id, content, meta, updated_at, content_hash, (embedding IS NOT NULL) AS has_embedding
-      FROM kb_chunks
+      FROM public.kb_chunks
       ${where}
       ORDER BY updated_at DESC
       LIMIT $${params.length + 1}
@@ -200,7 +209,7 @@ app.post("/admin/kb", requireAdmin, async (req, res) => {
 
   try {
     const q = `
-      INSERT INTO kb_chunks (content, meta, content_hash)
+      INSERT INTO public.kb_chunks (content, meta, content_hash)
       VALUES ($1, $2, $3)
       ON CONFLICT (content_hash) DO UPDATE SET updated_at = now()
       RETURNING *
@@ -224,7 +233,7 @@ app.put("/admin/kb/:id", requireAdmin, async (req, res) => {
 
   try {
     const q = `
-      UPDATE kb_chunks
+      UPDATE public.kb_chunks
       SET content = $1,
           meta = $2,
           content_hash = $3,
@@ -246,7 +255,7 @@ app.delete("/admin/kb/:id", requireAdmin, async (req, res) => {
   const id = (req.params.id || "").toString();
   if (!id) return res.status(400).json({ error: "id_required" });
   try {
-    const r = await pool.query(`DELETE FROM kb_chunks WHERE id = $1 RETURNING id`, [id]);
+    const r = await pool.query(`DELETE FROM public.kb_chunks WHERE id = $1 RETURNING id`, [id]);
     if (!r.rows.length) return res.status(404).json({ error: "not_found" });
     res.json({ ok: true, id });
   } catch (e) {
@@ -274,12 +283,12 @@ app.post("/admin/kb/embed/:id", requireAdmin, async (req, res) => {
   const id = (req.params.id || "").toString();
   if (!id) return res.status(400).json({ error: "id_required" });
   try {
-    const { rows } = await pool.query("SELECT id, content FROM kb_chunks WHERE id = $1", [id]);
+    const { rows } = await pool.query("SELECT id, content FROM public.kb_chunks WHERE id = $1", [id]);
     if (!rows.length) return res.status(404).json({ error: "not_found" });
     const emb = await embedText(rows[0].content);
     const embLiteral = `[${emb.join(",")}]`;
     const r = await pool.query(
-      `UPDATE kb_chunks SET embedding = $2::vector(1536), updated_at = now() WHERE id = $1 RETURNING id`,
+      `UPDATE public.kb_chunks SET embedding = $2::vector(1536), updated_at = now() WHERE id = $1 RETURNING id`,
       [id, embLiteral]
     );
     res.json({ ok: true, id: r.rows[0].id });
@@ -292,7 +301,7 @@ app.post("/admin/kb/embed/missing", requireAdmin, async (req, res) => {
   const limit = Math.max(1, Math.min(50, parseInt(req.query.limit || "10", 10)));
   try {
     const { rows } = await pool.query(
-      `SELECT id, content FROM kb_chunks WHERE embedding IS NULL ORDER BY updated_at DESC LIMIT $1`,
+      `SELECT id, content FROM public.kb_chunks WHERE embedding IS NULL ORDER BY updated_at DESC LIMIT $1`,
       [limit]
     );
     const updated = [];
@@ -301,12 +310,12 @@ app.post("/admin/kb/embed/missing", requireAdmin, async (req, res) => {
         const emb = await embedText(row.content);
         const embLiteral = `[${emb.join(",")}]`;
         await pool.query(
-          `UPDATE kb_chunks SET embedding = $2::vector(1536), updated_at = now() WHERE id = $1`,
+          `UPDATE public.kb_chunks SET embedding = $2::vector(1536), updated_at = now() WHERE id = $1`,
           [row.id, embLiteral]
         );
         updated.push(row.id);
       } catch {
-        // skip failures
+        // continue others
       }
     }
     res.json({ ok: true, updated_count: updated.length, updated });
@@ -318,7 +327,7 @@ app.post("/admin/kb/embed/missing", requireAdmin, async (req, res) => {
 app.post("/admin/kb/search", requireAdmin, async (req, res) => {
   const query = (req.body?.query || "").toString();
   const k = Math.max(1, Math.min(50, parseInt(req.body?.k || "6", 10)));
-  const searchTextFilter = normalizeSearch(req.body?.search);
+  const searchTextFilter = (req.body?.search || "").toString().trim();
   if (!query.trim()) return res.status(400).json({ error: "query_required" });
 
   try {
@@ -332,7 +341,7 @@ app.post("/admin/kb/search", requireAdmin, async (req, res) => {
     }
     const sql = `
       SELECT id, content, meta, updated_at, (embedding <=> $${params.length + 1}::vector(1536)) AS distance
-      FROM kb_chunks
+      FROM public.kb_chunks
       ${where}
       ORDER BY distance ASC
       LIMIT ${k}
