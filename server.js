@@ -7,7 +7,7 @@ import connectPgSimple from "connect-pg-simple";
 import fs from "fs";
 import { promises as fsp } from "fs";
 import multer from "multer";
-import pdfParse from "pdf-parse";
+import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import { htmlToText } from "html-to-text";
 import axios from "axios";
 
