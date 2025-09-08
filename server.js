@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import dotenv from "dotenv";
 import pkg from "pg";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
@@ -12,7 +11,6 @@ import pdfParse from "pdf-parse";
 import { htmlToText } from "html-to-text";
 import axios from "axios";
 
-dotenv.config();
 const { Pool } = pkg;
 
 const __filename = fileURLToPath(import.meta.url);
