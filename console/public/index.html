@@ -18,32 +18,19 @@
           </p>
         </div>
         <div class="mt-1">
-          <span
-            id="diag-badge"
-            class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-gray-200 text-gray-700"
-          >
+          <span id="diag-badge"
+            class="inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-gray-200 text-gray-700">
             Checking DB…
           </span>
         </div>
       </div>
 
-      <!-- Tabs -->
       <div class="mt-4 flex flex-wrap gap-2">
-        <button data-tab="tab-kb" class="tabbtn rounded-xl bg-indigo-600 text-white px-3 py-2 text-sm">
-          KB
-        </button>
-        <button data-tab="tab-bot" class="tabbtn rounded-xl bg-gray-200 text-gray-900 px-3 py-2 text-sm">
-          Bot Preview
-        </button>
-        <button data-tab="tab-msg" class="tabbtn rounded-xl bg-gray-200 text-gray-900 px-3 py-2 text-sm">
-          Messages
-        </button>
-        <button data-tab="tab-cust" class="tabbtn rounded-xl bg-gray-200 text-gray-900 px-3 py-2 text-sm">
-          Customers
-        </button>
-        <button data-tab="tab-settings" class="tabbtn rounded-xl bg-gray-200 text-gray-900 px-3 py-2 text-sm">
-          Settings
-        </button>
+        <button data-tab="tab-kb" class="tabbtn rounded-xl bg-indigo-600 text-white px-3 py-2 text-sm">KB</button>
+        <button data-tab="tab-bot" class="tabbtn rounded-xl bg-gray-200 text-gray-900 px-3 py-2 text-sm">Bot Preview</button>
+        <button data-tab="tab-msg" class="tabbtn rounded-xl bg-gray-200 text-gray-900 px-3 py-2 text-sm">Messages</button>
+        <button data-tab="tab-cust" class="tabbtn rounded-xl bg-gray-200 text-gray-900 px-3 py-2 text-sm">Customers</button>
+        <button data-tab="tab-settings" class="tabbtn rounded-xl bg-gray-200 text-gray-900 px-3 py-2 text-sm">Settings</button>
       </div>
     </header>
 
@@ -60,19 +47,15 @@
           <input id="password" type="password" class="mt-1 w-full rounded-xl border px-3 py-2" placeholder="••••••••" />
         </div>
         <div class="flex gap-2">
-          <button id="loginBtn" class="flex-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 font-medium">
-            Login
-          </button>
-          <button id="logoutBtn" class="flex-1 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-900 px-4 py-2 font-medium hidden">
-            Logout
-          </button>
+          <button id="loginBtn" class="flex-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 font-medium">Login</button>
+          <button id="logoutBtn" class="flex-1 rounded-xl bg-gray-200 hover:bg-gray-300 text-gray-900 px-4 py-2 font-medium hidden">Logout</button>
         </div>
       </div>
       <p id="loginStatus" class="mt-3 text-sm text-gray-600"></p>
     </section>
 
     <section id="appWrap" class="hidden">
-      <!-- ================= KB TAB ================= -->
+      <!-- KB TAB -->
       <section id="tab-kb" class="tab">
         <!-- Actions -->
         <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
@@ -116,6 +99,8 @@
                   <option value="intranet">intranet</option>
                   <option value="personal">personal</option>
                   <option value="enbd-website">enbd-website</option>
+                  <option value="url">url</option>
+                  <option value="pdf">pdf</option>
                 </select>
               </div>
               <div>
@@ -145,7 +130,31 @@
           </div>
         </section>
 
-        <!-- Semantic Search -->
+        <!-- Add via URL -->
+        <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
+          <h3 class="text-base font-semibold mb-3">Add via URL</h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input id="urlInput" class="rounded-xl border px-3 py-2 md:col-span-2" placeholder="https://example.com/page" />
+            <button id="ingestUrlBtn" class="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-sm">Fetch & Add</button>
+          </div>
+          <p class="text-xs text-gray-500 mt-2">The page is fetched, converted to text, chunked, and added to KB.</p>
+          <div class="mt-3 text-sm">
+            <span id="urlStatus" class="text-gray-600"></span>
+          </div>
+        </section>
+
+        <!-- Upload PDF -->
+        <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
+          <h3 class="text-base font-semibold mb-3">Upload PDF</h3>
+          <div class="flex flex-wrap items-center gap-3">
+            <input id="pdfFile" type="file" accept="application/pdf" class="rounded-xl border px-3 py-2 bg-white" />
+            <button id="uploadPdfBtn" class="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-sm">Upload & Add</button>
+            <span id="pdfStatus" class="text-sm text-gray-600"></span>
+          </div>
+          <p class="text-xs text-gray-500 mt-2">PDF text is parsed in-memory, chunked, and added to KB.</p>
+        </section>
+
+        <!-- Semantic Search + KB list -->
         <section class="bg-white rounded-2xl shadow p-4 md:p-6">
           <h2 class="text-lg font-semibold mb-3">Semantic Search (pgvector)</h2>
           <div class="flex items-center gap-2 mb-3">
@@ -156,7 +165,6 @@
           <div id="semanticResults" class="space-y-3"></div>
         </section>
 
-        <!-- KB List -->
         <section class="bg-white rounded-2xl shadow p-4 md:p-6 mt-6">
           <div id="listWrap" class="overflow-x-auto">
             <table class="min-w-full text-sm">
@@ -176,7 +184,7 @@
         </section>
       </section>
 
-      <!-- ================= BOT PREVIEW TAB ================= -->
+      <!-- BOT PREVIEW TAB -->
       <section id="tab-bot" class="tab hidden">
         <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
           <h2 class="text-lg font-semibold mb-3">Bot Preview (RAG)</h2>
@@ -213,7 +221,7 @@
         </section>
       </section>
 
-      <!-- ================= MESSAGES TAB ================= -->
+      <!-- MESSAGES TAB -->
       <section id="tab-msg" class="tab hidden">
         <section class="bg-white rounded-2xl shadow p-4 md:p-6">
           <h2 class="text-lg font-semibold mb-3">Messages (Logs)</h2>
@@ -235,7 +243,7 @@
         </section>
       </section>
 
-      <!-- ================= CUSTOMERS TAB ================= -->
+      <!-- CUSTOMERS TAB -->
       <section id="tab-cust" class="tab hidden">
         <section class="bg-white rounded-2xl shadow p-4 md:p-6 mb-6">
           <h2 class="text-lg font-semibold mb-3">Add / Update Customer</h2>
@@ -247,9 +255,7 @@
             <input id="cNotes" class="rounded-xl border px-3 py-2 md:col-span-2" placeholder="Notes" />
           </div>
           <div class="mt-3">
-            <button id="saveCustomer" class="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-sm">
-              Save
-            </button>
+            <button id="saveCustomer" class="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-sm">Save</button>
             <span id="custStatus" class="text-xs text-gray-600 ml-2"></span>
           </div>
         </section>
@@ -274,7 +280,7 @@
         </section>
       </section>
 
-      <!-- ================= SETTINGS TAB ================= -->
+      <!-- SETTINGS TAB -->
       <section id="tab-settings" class="tab hidden">
         <section class="bg-white rounded-2xl shadow p-4 md:p-6">
           <h2 class="text-lg font-semibold mb-3">Bot Settings (Persona & Policy)</h2>
@@ -291,6 +297,10 @@
               <label class="flex items-center gap-2 text-sm">
                 <input id="setHandoff" type="checkbox" class="w-4 h-4" />
                 Allow human handoff
+              </label>
+              <label class="flex items-center gap-2 text-sm">
+                <input id="setPersonalize" type="checkbox" class="w-4 h-4" />
+                Personalize replies
               </label>
             </div>
             <div class="md:col-span-2">

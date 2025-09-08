@@ -13,7 +13,6 @@
     logoutBtn: qs("#logoutBtn"),
     loginStatus: qs("#loginStatus"),
 
-    // Tabs
     tabBtns: document.querySelectorAll(".tabbtn"),
     tabs: document.querySelectorAll(".tab"),
 
@@ -35,17 +34,25 @@
     addStatus: qs("#addStatus"),
     embedMissing: qs("#embedMissing"),
 
-    // KB list
+    // URL/PDF ingestion
+    urlInput: qs("#urlInput"),
+    ingestUrlBtn: qs("#ingestUrlBtn"),
+    urlStatus: qs("#urlStatus"),
+    pdfFile: qs("#pdfFile"),
+    uploadPdfBtn: qs("#uploadPdfBtn"),
+    pdfStatus: qs("#pdfStatus"),
+
+    // list
     kbTableBody: qs("#kbTableBody"),
     listStatus: qs("#listStatus"),
 
-    // Semantic
+    // semantic
     qSemantic: qs("#qSemantic"),
     doSemantic: qs("#doSemantic"),
     semanticStatus: qs("#semanticStatus"),
     semanticResults: qs("#semanticResults"),
 
-    // Bot preview
+    // bot preview
     botQ: qs("#botQ"),
     botPhone: qs("#botPhone"),
     botName: qs("#botName"),
@@ -56,11 +63,11 @@
     botAnswer: qs("#botAnswer"),
     botContexts: qs("#botContexts"),
 
-    // Messages
+    // messages
     msgTableBody: qs("#msgTableBody"),
     msgStatus: qs("#msgStatus"),
 
-    // Customers
+    // customers
     cPhone: qs("#cPhone"),
     cName: qs("#cName"),
     cCompany: qs("#cCompany"),
@@ -71,11 +78,12 @@
     custTableBody: qs("#custTableBody"),
     custListStatus: qs("#custListStatus"),
 
-    // Settings
+    // settings
     setPersona: qs("#setPersona"),
     setIdentityOn: qs("#setIdentityOn"),
     setIdentity: qs("#setIdentity"),
     setHandoff: qs("#setHandoff"),
+    setPersonalize: qs("#setPersonalize"),
     setPrompt: qs("#setPrompt"),
     saveSettings: qs("#saveSettings"),
     settingsStatus: qs("#settingsStatus"),
@@ -83,7 +91,6 @@
 
   els.backendUrl.textContent = baseUrl;
 
-  // ---------- utils ----------
   const handleResp = async (r) => {
     const t = await r.text();
     try { return JSON.parse(t); } catch { return t; }
@@ -91,12 +98,10 @@
   const setBadge = (ok) => {
     if (ok) {
       els.diagBadge.textContent = "DB OK";
-      els.diagBadge.className =
-        "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-green-100 text-green-800 border border-green-200";
+      els.diagBadge.className = "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-green-100 text-green-800 border border-green-200";
     } else {
       els.diagBadge.textContent = "DB Error";
-      els.diagBadge.className =
-        "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-red-100 text-red-800 border border-red-200";
+      els.diagBadge.className = "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium bg-red-100 text-red-800 border border-red-200";
     }
   };
   const setAuthedUI = (on) => {
@@ -112,7 +117,7 @@
   };
   const toStr = (v) => (v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 
-  // ---------- tabs ----------
+  // tabs
   els.tabBtns.forEach((btn) => {
     btn.addEventListener("click", () => {
       els.tabBtns.forEach((b) => {
@@ -130,7 +135,7 @@
     });
   });
 
-  // ---------- health / auth ----------
+  // health/auth
   const checkDiag = async () => {
     try {
       const r = await fetch(`${baseUrl}/__diag`, { credentials: "include" });
@@ -150,6 +155,7 @@
     } catch { setAuthedUI(false); return false; }
   };
 
+  // login/logout
   els.loginBtn.addEventListener("click", async () => {
     els.loginStatus.textContent = "Signing in…";
     const r = await fetch(`${baseUrl}/admin/login`, {
@@ -162,14 +168,18 @@
     els.loginStatus.textContent = "Signed in ✓"; setAuthedUI(true);
     await refreshCount(); await refreshList();
   });
-
   els.logoutBtn.addEventListener("click", async () => {
     els.loginStatus.textContent = "Signing out…";
     try { await fetch(`${baseUrl}/admin/logout`, { method: "POST", credentials: "include" }); } catch {}
     setAuthedUI(false); els.loginStatus.textContent = "Signed out.";
   });
 
-  // ---------- KB actions ----------
+  // KB helpers
+  const getTags = () => {
+    const arr = [];
+    for (const o of els.metaTags.options) if (o.selected) arr.push(o.value);
+    return arr;
+  };
   const buildQS = () => {
     const p = new URLSearchParams();
     p.set("limit", String(Math.max(1, Math.min(200, parseInt(els.limit.value || "10", 10)))));
@@ -178,6 +188,7 @@
     return p.toString();
   };
 
+  // KB actions/list
   const refreshCount = async () => {
     els.kbCount.textContent = "…";
     try {
@@ -186,7 +197,6 @@
       els.kbCount.textContent = r.ok ? (d?.count ?? "—") : "error";
     } catch { els.kbCount.textContent = "error"; }
   };
-
   const renderRows = (rows) => {
     els.kbTableBody.innerHTML = "";
     if (!rows?.length) {
@@ -219,7 +229,6 @@
     els.kbTableBody.querySelectorAll(".editBtn").forEach((b)=>b.addEventListener("click",()=>openEdit(b.dataset.id)));
     els.kbTableBody.querySelectorAll(".embedBtn").forEach((b)=>b.addEventListener("click",()=>doEmbedOne(b.dataset.id)));
   };
-
   const refreshList = async () => {
     els.listStatus.textContent = "Loading…";
     try {
@@ -231,12 +240,7 @@
     } catch (e) { els.listStatus.textContent = `List exception: ${e.message}`; }
   };
 
-  const getTags = () => {
-    const arr = [];
-    for (const o of els.metaTags.options) if (o.selected) arr.push(o.value);
-    return arr;
-  };
-
+  // KB add
   const addChunk = async () => {
     els.addStatus.textContent = "Adding…";
     const content = (els.content.value || "").trim();
@@ -255,7 +259,12 @@
       await refreshCount(); await refreshList();
     } catch (e) { els.addStatus.textContent = `Add exception: ${e.message}`; }
   };
-
+  const doDelete = async (id) => {
+    if (!confirm("Delete this chunk?")) return;
+    const r = await fetch(`${baseUrl}/admin/kb/${id}`, { method:"DELETE", credentials:"include" });
+    const d = await handleResp(r);
+    if (!r.ok) alert(`Delete failed: ${toStr(d)}`); else { await refreshCount(); await refreshList(); }
+  };
   const openEdit = async (id) => {
     const rowEl = [...els.kbTableBody.querySelectorAll("tr")].find(tr => tr.querySelector(`button.editBtn[data-id="${id}"]`));
     if (!rowEl) return;
@@ -281,20 +290,11 @@
     });
     actionsCell.querySelector(".cancelBtn").addEventListener("click", refreshList);
   };
-
-  const doDelete = async (id) => {
-    if (!confirm("Delete this chunk?")) return;
-    const r = await fetch(`${baseUrl}/admin/kb/${id}`, { method:"DELETE", credentials:"include" });
-    const d = await handleResp(r);
-    if (!r.ok) alert(`Delete failed: ${toStr(d)}`); else { await refreshCount(); await refreshList(); }
-  };
-
   const doEmbedOne = async (id) => {
     const r = await fetch(`${baseUrl}/admin/kb/embed/${id}`, { method:"POST", credentials:"include" });
     const d = await handleResp(r);
     if (!r.ok) alert(`Embed failed: ${toStr(d)}`); else els.listStatus.textContent = `Embedded ${id}`;
   };
-
   const doEmbedMissing = async () => {
     els.addStatus.textContent = "Embedding missing…";
     const r = await fetch(`${baseUrl}/admin/kb/embed/missing?limit=10`, { method:"POST", credentials:"include" });
@@ -303,7 +303,39 @@
     await refreshList();
   };
 
-  // ---------- Semantic search ----------
+  // URL/PDF ingestion
+  const metaFromForm = () => ({
+    src: els.metaSrc.value || "intranet",
+    product: (els.metaProduct.value || "").trim() || undefined,
+    tags: getTags()
+  });
+  const ingestUrl = async () => {
+    const url = (els.urlInput.value || "").trim();
+    if (!url) { els.urlStatus.textContent = "Enter a URL."; return; }
+    els.urlStatus.textContent = "Fetching & adding…";
+    const r = await fetch(`${baseUrl}/admin/kb/ingest/url`, {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, meta: metaFromForm() })
+    });
+    const d = await handleResp(r);
+    els.urlStatus.textContent = r.ok ? `Inserted ${d.inserted} chunk(s).` : `Error: ${toStr(d)}`;
+    if (r.ok) { await refreshCount(); await refreshList(); }
+  };
+  const uploadPdf = async () => {
+    const file = els.pdfFile.files?.[0];
+    if (!file) { els.pdfStatus.textContent = "Pick a PDF."; return; }
+    els.pdfStatus.textContent = "Uploading & adding…";
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("meta", JSON.stringify(metaFromForm()));
+    const r = await fetch(`${baseUrl}/admin/kb/upload/pdf`, { method: "POST", credentials: "include", body: fd });
+    const d = await handleResp(r);
+    els.pdfStatus.textContent = r.ok ? `Inserted ${d.inserted} chunk(s).` : `Error: ${toStr(d)}`;
+    if (r.ok) { els.pdfFile.value = ""; await refreshCount(); await refreshList(); }
+  };
+
+  // Semantic
   const doSemantic = async () => {
     const q = (els.qSemantic.value || "").trim();
     if (!q) { els.semanticStatus.textContent = "Enter a query."; return; }
@@ -325,7 +357,7 @@
     els.semanticStatus.textContent = `Found ${rows.length} result(s).`;
   };
 
-  // ---------- Bot preview ----------
+  // Bot preview
   const botAsk = async () => {
     const text = (els.botQ.value || "").trim();
     if (!text) { els.botStatus.textContent = "Enter a user question."; return; }
@@ -353,7 +385,7 @@
       </div>`).join("");
   };
 
-  // ---------- Messages ----------
+  // Messages & Customers
   const loadMessages = async () => {
     els.msgStatus.textContent = "Loading…"; els.msgTableBody.innerHTML = "";
     const r = await fetch(`${baseUrl}/admin/messages?limit=50`, { credentials:"include" });
@@ -370,8 +402,6 @@
       </tr>`).join("");
     els.msgStatus.textContent = `Loaded ${rows.length} message(s).`;
   };
-
-  // ---------- Customers ----------
   const loadCustomers = async () => {
     els.custListStatus.textContent = "Loading…"; els.custTableBody.innerHTML = "";
     const r = await fetch(`${baseUrl}/admin/customers?limit=100`, { credentials:"include" });
@@ -387,7 +417,6 @@
       </tr>`).join("");
     els.custListStatus.textContent = `Loaded ${rows.length} customer(s).`;
   };
-
   const saveCustomer = async () => {
     els.custStatus.textContent = "Saving…";
     const body = {
@@ -409,7 +438,7 @@
     if (r.ok) loadCustomers();
   };
 
-  // ---------- Settings ----------
+  // Settings
   const loadSettings = async () => {
     els.settingsStatus.textContent = "Loading…";
     try {
@@ -420,13 +449,13 @@
       els.setIdentityOn.checked = Boolean(cfg.include_identity_each_reply);
       els.setIdentity.value = cfg.identity_line || "— Siva (Emirates NBD virtual assistant)";
       els.setHandoff.checked = Boolean(cfg.allow_handoff);
+      els.setPersonalize.checked = Boolean(cfg.use_profile_personalization);
       els.setPrompt.value = cfg.system_prompt_override || "";
       els.settingsStatus.textContent = "Loaded ✓";
     } catch (e) {
       els.settingsStatus.textContent = `Load exception: ${e.message}`;
     }
   };
-
   const saveSettings = async () => {
     els.settingsStatus.textContent = "Saving…";
     const body = {
@@ -434,6 +463,7 @@
       include_identity_each_reply: Boolean(els.setIdentityOn.checked),
       identity_line: (els.setIdentity.value || "").trim(),
       allow_handoff: Boolean(els.setHandoff.checked),
+      use_profile_personalization: Boolean(els.setPersonalize.checked),
       system_prompt_override: (els.setPrompt.value || "").trim() || null
     };
     try {
@@ -449,25 +479,22 @@
     }
   };
 
-  // ---------- events ----------
+  // events
   els.refreshCount.addEventListener("click", refreshCount);
   els.refreshList.addEventListener("click", refreshList);
   els.applyPage.addEventListener("click", refreshList);
   els.search.addEventListener("keydown", (e)=>{ if (e.key==="Enter") { els.offset.value="0"; refreshCount(); refreshList(); }});
-
   els.addChunk.addEventListener("click", addChunk);
   els.embedMissing.addEventListener("click", doEmbedMissing);
-
+  els.ingestUrlBtn.addEventListener("click", ingestUrl);
+  els.uploadPdfBtn.addEventListener("click", uploadPdf);
   els.doSemantic.addEventListener("click", doSemantic);
   els.qSemantic.addEventListener("keydown", (e)=>{ if (e.key==="Enter") doSemantic(); });
-
   els.botAsk.addEventListener("click", botAsk);
-
   els.saveCustomer.addEventListener("click", saveCustomer);
-
   els.saveSettings.addEventListener("click", saveSettings);
 
-  // ---------- init ----------
+  // init
   (async () => {
     await checkDiag();
     await checkAuthed();
